@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Astra Maps</title>
+  <style>
+    body {
+      width: 240px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 13px;
+      margin: 0;
+      padding: 12px;
+      background: #f8f9fa;
+      color: #333;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #e0e0e0;
+    }
+    .header h1 { font-size: 14px; margin: 0; color: #1a1a2e; }
+    .header .version { font-size: 10px; color: #999; margin-top: 2px; }
+
+    .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 5px 0;
+    }
+    .label { color: #666; }
+    .value { font-weight: 500; }
+
+    .status-dot {
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      margin-right: 4px;
+    }
+    .status-dot.connected    { background: #28a745; }
+    .status-dot.disconnected { background: #dc3545; }
+
+    .divider { border: none; border-top: 1px solid #e0e0e0; margin: 8px 0; }
+
+    button {
+      width: 100%;
+      margin-top: 6px;
+      padding: 6px;
+      border: 1px solid #d0d7de;
+      border-radius: 5px;
+      background: white;
+      cursor: pointer;
+      font-size: 12px;
+      color: #333;
+      text-align: center;
+    }
+    button:hover { background: #f0f4f8; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>🗺 Astra Maps</h1>
+      <div class="version" id="extVersion">v—</div>
+    </div>
+  </div>
+
+  <div class="row">
+    <span class="label">Сервер</span>
+    <span class="value" id="wsStatus">
+      <span class="status-dot disconnected" id="wsDot"></span>
+      <span id="wsLabel">нет связи</span>
+    </span>
+  </div>
+
+  <div class="row">
+    <span class="label">Пользователь</span>
+    <span class="value" id="userName">—</span>
+  </div>
+
+  <div class="row">
+    <span class="label">Расчёт</span>
+    <span class="value" id="userRole">—</span>
+  </div>
+
+  <hr class="divider">
+
+  <button id="btnClearCache">🗑 Очистить кэш</button>
+
+  <script src="popup.js"></script>
+</body>
+</html>

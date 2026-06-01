@@ -1,0 +1,35 @@
+table {
+            font-family: 'Arial Narrow', Arial Narrow, sans-serif;
+    font-size: 13px;
+            border-collapse: collapse;
+            width: 50%;
+        }
+        th, td {
+            font-family: 'Arial Narrow', Arial Narrow, sans-serif;
+    font-size: 13px;
+            border: 1.5px solid black;
+            padding: 5px;
+            text-align: centre;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+      
+  .status-Поражена { background-color: lightgreen; }
+      .status-Не поражена  { background-color: red; }
+
+      td button {
+  background-color: #2196F3;
+  color: white;
+  padding: 2px 12px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.btn-hover {
+  background-color: #4CAF50;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}

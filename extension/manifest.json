@@ -1,0 +1,73 @@
+{
+  "manifest_version": 3,
+  "name": "Astra Maps Extension",
+  "version": "2.1.0",
+  "description": "Автоматический сбор данных с карты Astra Maps после авторизации",
+  "permissions": [
+    "storage",
+    "scripting",
+    "activeTab",
+    "downloads",
+    "notifications",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://center.astramaps.ru/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://center.astramaps.ru/*"
+      ],
+      "js": [
+        "inject.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://center.astramaps.ru/*"
+      ],
+      "js": [
+        "proj4.js",
+        "config.js",
+        "content/utils/coords.js",
+        "content/utils/date.js",
+        "content/utils/debounce.js",
+        "content/cache/cache.js",
+        "content/store/store.js",
+        "content/ws/wsHandlers.js",
+        "content/ws/wsClient.js",
+        "content/ui/toast.js",
+        "content/ui/roleSelector.js",
+        "content/ui/tasks.js",
+        "content/ui/planning.js",
+        "content/ui/panel.js",
+        "content/api/astraApi.js",
+        "content.js"
+      ],
+      "run_at": "document_start",
+      "css": [
+        "styles/style.css"
+      ]
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "Astra Maps",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
