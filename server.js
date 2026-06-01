@@ -1,35 +1,85 @@
 // server.js
 // Запуск: node server.js
 // Зависимости: npm install ws better-sqlite3
+//
+// Управление токенами (CLI):
+//   node server.js --issue <username> [<role>] [<officeId>]   — выдать токен
+//   node server.js --revoke <token>                           — отозвать токен
+//   node server.js --list                                     — список токенов
 
 const WebSocket = require('ws');
 const Database  = require('better-sqlite3');
 const path      = require('path');
 const fs        = require('fs');
 const http      = require('http');
+const crypto    = require('crypto');
 
 // ─────────────────────────────────────────────────────────────────
-// Офисы — дублируют config.js (сервер не имеет доступа к браузерному коду)
-// Добавить офис: одна запись здесь и в config.js клиента
+// CLI-режим — управление токенами без запуска сервера
+// ─────────────────────────────────────────────────────────────────
+const args = process.argv.slice(2);
+if (args[0] === '--issue' || args[0] === '--revoke' || args[0] === '--list') {
+  const db = new Database(path.join(__dirname, 'data.db'));
+  db.pragma('journal_mode = WAL');
+  ensureTokenTable(db);
+
+  if (args[0] === '--issue') {
+    const username = args[1];
+    const role     = args[2] || null;
+    const officeId = args[3] || 'HQ';
+    if (!username) { console.error('Укажи username: node server.js --issue <username> [role] [officeId]'); process.exit(1); }
+    const token = generateToken();
+    db.prepare(`
+      INSERT INTO tokens (token, username, role, office_id, active, issued_at)
+      VALUES (?, ?, ?, ?, 1, datetime('now'))
+    `).run(token, username, role, officeId);
+    console.log(`\n✅ Токен выдан для "${username}" [${role || 'роль не задана'}] офис: ${officeId}`);
+    console.log(`🔑 Токен: ${token}\n`);
+
+  } else if (args[0] === '--revoke') {
+    const token = args[1];
+    if (!token) { console.error('Укажи токен: node server.js --revoke <token>'); process.exit(1); }
+    const result = db.prepare(`UPDATE tokens SET active = 0 WHERE token = ?`).run(token);
+    if (result.changes > 0) console.log(`✅ Токен отозван`);
+    else console.log(`⚠️  Токен не найден`);
+
+  } else if (args[0] === '--list') {
+    const rows = db.prepare(`SELECT token, username, role, office_id, active, issued_at FROM tokens ORDER BY issued_at DESC`).all();
+    if (!rows.length) { console.log('Токенов нет'); process.exit(0); }
+    console.log('\nТокены:\n');
+    rows.forEach(r => {
+      const status = r.active ? '✅ активен' : '❌ отозван';
+      console.log(`${status} | ${r.username} | ${r.role || '—'} | офис: ${r.office_id} | выдан: ${r.issued_at}`);
+      console.log(`         ${r.token}\n`);
+    });
+  }
+  process.exit(0);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Генерация токена
+// ─────────────────────────────────────────────────────────────────
+function generateToken() {
+  return crypto.randomBytes(32).toString('hex'); // 64 символа hex
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Офисы
 // ─────────────────────────────────────────────────────────────────
 const OFFICES = {
-  'HQ':    { name: 'Головной офис',  short: 'ГО',   isHQ: true,  roles: ['разведка','рэб','инженеры','артиллерия','бпс','админ','гооп','босс'] },
-  'o177':  { name: '177 ОГВПМП',     short: '177',  isHQ: false, roles: ['разведка','рэб','инженеры','артиллерия','бпс','админ','гооп','босс'] },
-  // Шаблон: 'o3bat': { name: '3-й батальон', short: '3 бат.', isHQ: false, roles: [...] },
+  'HQ':   { name: 'Головной офис', short: 'ГО',  isHQ: true,  roles: ['разведка','рэб','инженеры','артиллерия','бпс','админ','гооп','босс'] },
+  'o177': { name: '177 ОГВПМП',    short: '177', isHQ: false, roles: ['разведка','рэб','инженеры','артиллерия','бпс','админ','гооп','босс'] },
 };
 
-// Роли допустимы из любого офиса (одинаковые)
 const VALID_ROLES = ['разведка','рэб','инженеры','артиллерия','бпс','админ','гооп','босс'];
 
-// Правило назначения задач
 function canAssignTask(fromOffice, toOffice) {
-  if (!fromOffice || !toOffice) return true;   // старые клиенты без officeId — разрешаем
+  if (!fromOffice || !toOffice) return true;
   if (fromOffice === toOffice) return true;
   if (OFFICES[fromOffice]?.isHQ) return true;
   return false;
 }
 
-// Статус онлайн — объект { officeId: [roles] }
 function getOnlineByOffice() {
   const result = {};
   for (const [, client] of clients) {
@@ -41,100 +91,84 @@ function getOnlineByOffice() {
   return result;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// HTTP СЕРВЕР — раздача файлов расширения для обновления
-// Файлы расширения лежат в папке ./extension рядом с server.js
-// Порт 5001 — отдельно от WS порта 5000
-// ═══════════════════════════════════════════════════════════════════════════
-
+// ─────────────────────────────────────────────────────────────────
+// HTTP СЕРВЕР — раздача файлов расширения (порт 5001)
+// ─────────────────────────────────────────────────────────────────
 const EXTENSION_DIR = path.join(__dirname, 'extension');
 const HTTP_PORT     = 5001;
 
-// Разрешённые файлы для скачивания (безопасность)
-const ALLOWED_FILES = [
-  'manifest.json',
-  'content.js',
-  'background.js',
-  'inject.js',
-  'version.json',
-];
-
-const MIME_TYPES = {
-  '.js':   'application/javascript',
-  '.json': 'application/json',
-  '.png':  'image/png',
-};
+const ALLOWED_FILES = ['manifest.json','content.js','background.js','inject.js','version.json'];
+const MIME_TYPES    = { '.js':'application/javascript', '.json':'application/json', '.png':'image/png' };
 
 const httpServer = http.createServer((req, res) => {
-  // CORS — разрешаем запросы с любого источника (только в локальной сети)
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET');
 
-  const url      = req.url.split('?')[0]; // убираем query string
-  const fileName = path.basename(url);    // только имя файла, без пути
+  const url      = req.url.split('?')[0];
+  const fileName = path.basename(url);
 
-  // Разрешаем только конкретные файлы
-  if (!ALLOWED_FILES.includes(fileName)) {
-    res.writeHead(404);
-    res.end('Not found');
-    return;
-  }
+  if (!ALLOWED_FILES.includes(fileName)) { res.writeHead(404); res.end('Not found'); return; }
 
   const filePath = path.join(EXTENSION_DIR, fileName);
+  if (!fs.existsSync(filePath)) { res.writeHead(404); res.end('File not found'); return; }
 
-  if (!fs.existsSync(filePath)) {
-    res.writeHead(404);
-    res.end('File not found');
-    return;
-  }
-
-  const ext      = path.extname(fileName);
-  const mimeType = MIME_TYPES[ext] || 'text/plain';
-
+  const mimeType = MIME_TYPES[path.extname(fileName)] || 'text/plain';
   res.writeHead(200, { 'Content-Type': mimeType });
   fs.createReadStream(filePath).pipe(res);
 });
 
 httpServer.listen(HTTP_PORT, () => {
   log(`📦 HTTP сервер обновлений запущен на порту ${HTTP_PORT}`);
-  log(`   Файлы расширения: ${EXTENSION_DIR}`);
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// БАЗА ДАННЫХ (SQLite — один файл, переживает перезапуски сервера)
-// ═══════════════════════════════════════════════════════════════════════════
-
+// ─────────────────────────────────────────────────────────────────
+// БАЗА ДАННЫХ
+// ─────────────────────────────────────────────────────────────────
 const db = new Database(path.join(__dirname, 'data.db'));
-
-// WAL-режим: параллельные чтения не блокируют запись
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
+// Создаём таблицу токенов
+function ensureTokenTable(database) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS tokens (
+      token      TEXT PRIMARY KEY,
+      username   TEXT NOT NULL,
+      role       TEXT,
+      office_id  TEXT DEFAULT 'HQ',
+      active     INTEGER DEFAULT 1,
+      issued_at  TEXT DEFAULT (datetime('now')),
+      last_used  TEXT
+    );
+  `);
+}
+ensureTokenTable(db);
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS plans (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    target_id   TEXT    NOT NULL,
-    target_data TEXT    NOT NULL,
-    plan_date   TEXT    NOT NULL,
-    created_by  TEXT    NOT NULL,
-    created_at  TEXT    DEFAULT (datetime('now')),
-    published   INTEGER DEFAULT 0,
-    published_at TEXT   DEFAULT NULL,
-    note        TEXT    DEFAULT '',
-    UNIQUE (target_id, plan_date)   -- защита от дублей на уровне БД
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    target_id    TEXT    NOT NULL,
+    target_data  TEXT    NOT NULL,
+    plan_date    TEXT    NOT NULL,
+    created_by   TEXT    NOT NULL,
+    created_at   TEXT    DEFAULT (datetime('now')),
+    published    INTEGER DEFAULT 0,
+    published_at TEXT    DEFAULT NULL,
+    note         TEXT    DEFAULT '',
+    UNIQUE (target_id, plan_date)
   );
-  CREATE INDEX IF NOT EXISTS idx_plans_date ON plans(plan_date);
-  CREATE INDEX IF NOT EXISTS idx_plans_published ON plans(plan_date, published);
+  CREATE INDEX IF NOT EXISTS idx_plans_date       ON plans(plan_date);
+  CREATE INDEX IF NOT EXISTS idx_plans_published  ON plans(plan_date, published);
 `);
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    astra_id    TEXT    UNIQUE,          -- id из профиля AstraMap
-    role        TEXT    NOT NULL,        -- расчёт: разведка | рэб | ...
-    display_name TEXT,                   -- имя из профиля
-    token_hint  TEXT,                    -- первые 8 символов токена (для отладки)
-    last_seen   TEXT    DEFAULT (datetime('now'))
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    astra_id     TEXT    UNIQUE,
+    role         TEXT    NOT NULL,
+    display_name TEXT,
+    token_hint   TEXT,
+    last_seen    TEXT    DEFAULT (datetime('now'))
   );
 
   CREATE TABLE IF NOT EXISTS tasks (
@@ -153,8 +187,15 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_tasks_to_status ON tasks(to_role, status);
 `);
 
-// ── Подготовленные запросы (быстрее чем строить SQL каждый раз) ──────────────
+// ─────────────────────────────────────────────────────────────────
+// Подготовленные запросы
+// ─────────────────────────────────────────────────────────────────
 const stmt = {
+  // Токены
+  getToken:     db.prepare(`SELECT * FROM tokens WHERE token = ? AND active = 1`),
+  touchToken:   db.prepare(`UPDATE tokens SET last_used = datetime('now') WHERE token = ?`),
+
+  // Пользователи
   upsertUser: db.prepare(`
     INSERT INTO users (astra_id, role, display_name, token_hint, last_seen)
     VALUES (@astra_id, @role, @display_name, @token_hint, datetime('now'))
@@ -164,96 +205,58 @@ const stmt = {
       token_hint   = excluded.token_hint,
       last_seen    = datetime('now')
   `),
+  getRoleByAstraId: db.prepare(`SELECT role, display_name FROM users WHERE astra_id = ?`),
 
-  getRoleByAstraId: db.prepare(
-    `SELECT role, display_name FROM users WHERE astra_id = ?`
-  ),
-
+  // Задачи
   insertTask: db.prepare(`
     INSERT INTO tasks (from_role, to_role, target_id, target_title, text, status)
     VALUES (@from_role, @to_role, @target_id, @target_title, @text, 'новая')
   `),
-
   updateTaskStatus: db.prepare(`
     UPDATE tasks SET status = @status, updated_at = datetime('now'), updated_by = @updated_by
     WHERE id = @id
   `),
+  getTask:         db.prepare(`SELECT * FROM tasks WHERE id = ?`),
+  getPendingTasks: db.prepare(`SELECT * FROM tasks WHERE to_role = ? AND status = 'новая' ORDER BY created_at ASC`),
+  getRecentTasks:  db.prepare(`SELECT * FROM tasks WHERE from_role = ? OR to_role = ? ORDER BY created_at DESC LIMIT 100`),
 
-  getTask: db.prepare(`SELECT * FROM tasks WHERE id = ?`),
-
-  getPendingTasks: db.prepare(`
-    SELECT * FROM tasks WHERE to_role = ? AND status = 'новая'
-    ORDER BY created_at ASC
-  `),
-
-  getRecentTasks: db.prepare(`
-    SELECT * FROM tasks
-    WHERE from_role = ? OR to_role = ?
-    ORDER BY created_at DESC LIMIT 100
-  `),
-
-  touchUser: db.prepare(
-    `UPDATE users SET last_seen = datetime('now') WHERE astra_id = ?`
-  ),
-
-  // Plans
-  // INSERT OR IGNORE — если план (target_id, plan_date) уже есть, тихо пропускаем
+  // Планы
   insertPlan: db.prepare(`
     INSERT OR IGNORE INTO plans (target_id, target_data, plan_date, created_by, note)
     VALUES (@target_id, @target_data, @plan_date, @created_by, @note)
   `),
-  getPlansForDate: db.prepare(`
-    SELECT * FROM plans WHERE plan_date = ? ORDER BY created_at DESC
-  `),
-  deletePlan: db.prepare(`DELETE FROM plans WHERE id = ?`),
-  getPlanById: db.prepare(`SELECT * FROM plans WHERE id = ?`),
-  getUnpublishedPlans: db.prepare(`
-    SELECT * FROM plans WHERE plan_date = ? AND published = 0 ORDER BY created_at ASC
-  `),
-  markPlanPublished: db.prepare(`
-    UPDATE plans SET published = 1, published_at = datetime('now') WHERE id = ?
-  `),
-  getPlansByDate: db.prepare(`SELECT * FROM plans WHERE plan_date = ? ORDER BY created_at ASC`),
+  getPlansForDate:     db.prepare(`SELECT * FROM plans WHERE plan_date = ? ORDER BY created_at DESC`),
+  deletePlan:          db.prepare(`DELETE FROM plans WHERE id = ?`),
+  getPlanById:         db.prepare(`SELECT * FROM plans WHERE id = ?`),
+  getUnpublishedPlans: db.prepare(`SELECT * FROM plans WHERE plan_date = ? AND published = 0 ORDER BY created_at ASC`),
+  markPlanPublished:   db.prepare(`UPDATE plans SET published = 1, published_at = datetime('now') WHERE id = ?`),
+  getPlansByDate:      db.prepare(`SELECT * FROM plans WHERE plan_date = ? ORDER BY created_at ASC`),
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────────────
 // WEBSOCKET СЕРВЕР
-// ═══════════════════════════════════════════════════════════════════════════
-
-// ── SSL сертификаты для WSS ──────────────────────────────────────────────────
-// Создай сертификат командой (нужен openssl):
-//   openssl req -x509 -nodes -days 3650 -newkey rsa:2048 -keyout key.pem -out cert.pem -subj "/CN=localhost"
-// Файлы cert.pem и key.pem положи рядом с server.js
-
-// Обычный WS без SSL — Mixed Content обходится через background.js расширения.
-// Background service worker может подключаться к ws:// без ограничений браузера.
+// ─────────────────────────────────────────────────────────────────
 const wss = new WebSocket.Server({ port: 5000 });
 
-// Подключённые клиенты: username → { ws, role, astraId, displayName }
-// Ключ — username (уникален), не role (может быть одинаковой у нескольких)
+// Подключённые клиенты: astraId → { ws, role, officeId, displayName }
 const clients = new Map();
 
 function log(msg) {
   console.log(`[${new Date().toLocaleTimeString('ru-RU')}] ${msg}`);
 }
 
-// Нормализует поля задачи из БД (from_role/to_role) для клиента (from/to)
 function normalizeTask(task) {
-  return {
-    ...task,
-    from: task.from_role || task.from || '',
-    to:   task.to_role   || task.to   || '',
-  };
+  return { ...task, from: task.from_role || task.from || '', to: task.to_role || task.to || '' };
 }
 
-// Отправить сообщение всем клиентам с нужной ролью
 function sendTo(role, data) {
-  const targets = getClientsByRole(role);
-  if (targets.length === 0) return false;
-  targets.forEach(client => {
-    try { client.ws.send(JSON.stringify(data)); } catch {}
-  });
-  return true;
+  let sent = false;
+  for (const [, client] of clients) {
+    if (client.role === role && client.ws.readyState === WebSocket.OPEN) {
+      try { client.ws.send(JSON.stringify(data)); sent = true; } catch {}
+    }
+  }
+  return sent;
 }
 
 function broadcast(data, exceptRole = null) {
@@ -268,13 +271,12 @@ function broadcast(data, exceptRole = null) {
 function broadcastAll(data) {
   for (const [, client] of clients) {
     if (client.ws.readyState === WebSocket.OPEN) {
-      client.ws.send(JSON.stringify(data));
+      try { client.ws.send(JSON.stringify(data)); } catch {}
     }
   }
 }
 
 function getOnlineRoles() {
-  // Возвращаем список уникальных ролей онлайн
   const roles = new Set();
   for (const [, client] of clients) {
     if (client.ws.readyState === WebSocket.OPEN) roles.add(client.role);
@@ -282,23 +284,23 @@ function getOnlineRoles() {
   return [...roles];
 }
 
-// Получить всех клиентов с нужной ролью (может быть несколько)
-function getClientsByRole(role) {
-  const result = [];
-  for (const [, client] of clients) {
-    if (client.role === role && client.ws.readyState === WebSocket.OPEN) {
-      result.push(client);
+// ─────────────────────────────────────────────────────────────────
+// Обработка подключений
+// ─────────────────────────────────────────────────────────────────
+wss.on('connection', (ws, req) => {
+  let myRole     = null;
+  let myAstraId  = null;
+  let myName     = null;
+  let myOfficeId = 'HQ';
+  let authenticated = false; // флаг — прошёл ли клиент проверку токена
+
+  // Таймер — если клиент не прошёл REGISTER за 10 секунд, отключаем
+  const authTimeout = setTimeout(() => {
+    if (!authenticated) {
+      log(`⏱️  Таймаут авторизации — клиент не прислал REGISTER`);
+      ws.close(4001, 'Auth timeout');
     }
-  }
-  return result;
-}
-
-// ── Обработка соединений ──────────────────────────────────────────────────────
-
-wss.on('connection', (ws) => {
-  let myRole       = null;
-  let myAstraId    = null;
-  let myName       = null;
+  }, 10_000);
 
   ws.on('message', async (raw) => {
     let msg;
@@ -307,106 +309,118 @@ wss.on('connection', (ws) => {
       return;
     }
 
-    switch (msg.type) {
+    // ── PING — без авторизации ────────────────────────────────────────────
+    if (msg.type === 'PING') {
+      ws.send(JSON.stringify({ type: 'PONG' }));
+      return;
+    }
 
-      // ── Регистрация ───────────────────────────────────────────────────────
-      // Клиент присылает данные пользователя из /go/permission-group.
-      // Роль определяется на клиенте по маппингу username → расчёт,
-      // сервер сохраняет в БД и может переопределить при несоответствии.
-      //
-      // { type: 'REGISTER', userId, username, displayName, role }
-      //   role = null  →  сервер ответит NEED_ROLE, клиент покажет выбор
-      case 'REGISTER': {
-        const userId      = msg.userId?.toString() || null;
-        const username    = (msg.username    || '').trim();
-        const displayName = (msg.displayName || username || 'Неизвестно').trim();
-        const role        = (msg.role        || '').toLowerCase().trim() || null;
+    // ── REGISTER — единственное место где проверяем токен ────────────────
+    if (msg.type === 'REGISTER') {
+      clearTimeout(authTimeout);
 
-        if (!username) {
-          ws.send(JSON.stringify({ type: 'ERROR', text: 'username обязателен' }));
-          return;
-        }
+      const token       = (msg.token || '').trim();
+      const userId      = msg.userId?.toString() || null;
+      const username    = (msg.username    || '').trim();
+      const displayName = (msg.displayName || username || 'Неизвестно').trim();
 
-        // Проверяем кэш в БД по userId/username
-        let resolvedRole = role;
-        if (userId) {
-          const cached = stmt.getRoleByAstraId.get(userId);
-          if (cached) {
-            resolvedRole = cached.role;
-            log(`🔑 Роль из БД: ${resolvedRole} (${displayName})`);
-          }
-        }
-
-        // Роль так и не определена — просим клиента выбрать вручную
-        if (!resolvedRole || !VALID_ROLES.includes(resolvedRole)) {
-          ws.send(JSON.stringify({
-            type:       'NEED_ROLE',
-            text:       `Не удалось определить расчёт для ${displayName}. Выберите вручную.`,
-            validRoles: VALID_ROLES,
-          }));
-          return;
-        }
-
-        // Сохраняем/обновляем в БД
-        stmt.upsertUser.run({
-          astra_id:     userId || username,
-          role:         resolvedRole,
-          display_name: displayName,
-          token_hint:   username,
-        });
-
-        myRole    = resolvedRole;
-        myAstraId = userId || username;
-        myName    = displayName;
-        const myOfficeId = (msg.officeId && OFFICES[msg.officeId]) ? msg.officeId : 'HQ';
-
-        clients.set(myAstraId, { ws, role: myRole, astraId: myAstraId, displayName: myName, officeId: myOfficeId });
-        log(`✅ ${myName} [${myRole}] подключён`);
-
-        ws.send(JSON.stringify({
-          type:        'REGISTERED',
-          role:        myRole,
-          displayName: myName,
-          officeId:    myOfficeId,
-          online:      getOnlineByOffice(),
-        }));
-
-        // Непрочитанные задачи (только со статусом 'новая')
-        const pending = stmt.getPendingTasks.all(myRole);
-        if (pending.length > 0) {
-          ws.send(JSON.stringify({ type: 'PENDING_TASKS', tasks: pending.map(normalizeTask) }));
-        }
-
-        // История задач этого расчёта (последние 100)
-        const history = stmt.getRecentTasks.all(myRole, myRole);
-        ws.send(JSON.stringify({ type: 'TASKS_HISTORY', tasks: history.map(normalizeTask) }));
-
-        broadcast({ type: 'USER_ONLINE', role: myRole, displayName: myName, officeId: myOfficeId, online: getOnlineByOffice() }, myRole);
-        break;
+      // ── Проверка токена ───────────────────────────────────────────────
+      if (!token) {
+        log(`🚫 REGISTER без токена: ${username}`);
+        ws.send(JSON.stringify({ type: 'AUTH_ERROR', text: 'Токен обязателен' }));
+        ws.close(4003, 'No token');
+        return;
       }
 
-      // ── Новая задача ──────────────────────────────────────────────────────
-      // { type: 'NEW_TASK', to: 'разведка', targetId, targetTitle, text }
-      case 'NEW_TASK': {
-        if (!myRole) { ws.send(JSON.stringify({ type: 'ERROR', text: 'Сначала REGISTER' })); return; }
+      const tokenRow = stmt.getToken.get(token);
+      if (!tokenRow) {
+        log(`🚫 Недействительный токен от: ${username} (${req.socket.remoteAddress})`);
+        ws.send(JSON.stringify({ type: 'AUTH_ERROR', text: 'Недействительный или отозванный токен' }));
+        ws.close(4003, 'Invalid token');
+        return;
+      }
 
+      // Обновляем last_used
+      stmt.touchToken.run(token);
+
+      // Роль: из токена (приоритет) → из БД по userId → из сообщения → NEED_ROLE
+      let resolvedRole = tokenRow.role || null;
+      if (!resolvedRole && userId) {
+        const cached = stmt.getRoleByAstraId.get(userId);
+        if (cached) resolvedRole = cached.role;
+      }
+      if (!resolvedRole) resolvedRole = (msg.role || '').toLowerCase().trim() || null;
+
+      if (!resolvedRole || !VALID_ROLES.includes(resolvedRole)) {
+        ws.send(JSON.stringify({
+          type:       'NEED_ROLE',
+          text:       `Выберите расчёт`,
+          validRoles: VALID_ROLES,
+        }));
+        // Не закрываем — ждём повторного REGISTER с выбранной ролью
+        return;
+      }
+
+      // Офис из токена → из сообщения → HQ
+      myOfficeId = (tokenRow.office_id && OFFICES[tokenRow.office_id])
+        ? tokenRow.office_id
+        : (msg.officeId && OFFICES[msg.officeId] ? msg.officeId : 'HQ');
+
+      // Сохраняем в БД
+      stmt.upsertUser.run({
+        astra_id:     userId || username,
+        role:         resolvedRole,
+        display_name: displayName,
+        token_hint:   token.slice(0, 8), // только первые 8 символов для отладки
+      });
+
+      myRole    = resolvedRole;
+      myAstraId = userId || username;
+      myName    = displayName;
+      authenticated = true;
+
+      clients.set(myAstraId, { ws, role: myRole, astraId: myAstraId, displayName: myName, officeId: myOfficeId });
+      log(`✅ ${myName} [${myRole}·${myOfficeId}] подключён (токен: ${token.slice(0,8)}...)`);
+
+      ws.send(JSON.stringify({
+        type:        'REGISTERED',
+        role:        myRole,
+        displayName: myName,
+        officeId:    myOfficeId,
+        online:      getOnlineByOffice(),
+      }));
+
+      const pending = stmt.getPendingTasks.all(myRole);
+      if (pending.length > 0) {
+        ws.send(JSON.stringify({ type: 'PENDING_TASKS', tasks: pending.map(normalizeTask) }));
+      }
+      const history = stmt.getRecentTasks.all(myRole, myRole);
+      ws.send(JSON.stringify({ type: 'TASKS_HISTORY', tasks: history.map(normalizeTask) }));
+
+      broadcast({ type: 'USER_ONLINE', role: myRole, displayName: myName, officeId: myOfficeId, online: getOnlineByOffice() }, myRole);
+      return;
+    }
+
+    // ── Все остальные сообщения — только после авторизации ───────────────
+    if (!authenticated || !myRole) {
+      ws.send(JSON.stringify({ type: 'AUTH_ERROR', text: 'Сначала REGISTER с токеном' }));
+      return;
+    }
+
+    switch (msg.type) {
+
+      case 'NEW_TASK': {
         const toRole = (msg.to || '').toLowerCase().trim();
         if (!VALID_ROLES.includes(toRole)) {
           ws.send(JSON.stringify({ type: 'ERROR', text: `Неизвестный расчёт: ${toRole}` })); return;
         }
-
-        // Проверка прав по офисам
-        const myClient    = clients.get(myAstraId);
-        const fromOffice  = myClient?.officeId || 'HQ';
-        const toOfficeId  = msg.toOfficeId || fromOffice;
-        if (!canAssignTask(fromOffice, toOfficeId)) {
+        const toOfficeId = msg.toOfficeId || myOfficeId;
+        if (!canAssignTask(myOfficeId, toOfficeId)) {
           ws.send(JSON.stringify({ type: 'ERROR', text: 'Нет прав назначать задачи этому офису' })); return;
         }
         if (!msg.text?.trim()) {
           ws.send(JSON.stringify({ type: 'ERROR', text: 'Текст задачи обязателен' })); return;
         }
-
-        // Сохраняем в SQLite
         const info = stmt.insertTask.run({
           from_role:    myRole,
           to_role:      toRole,
@@ -414,66 +428,47 @@ wss.on('connection', (ws) => {
           target_title: msg.targetTitle || '',
           text:         msg.text.trim(),
         });
-        const task = stmt.getTask.get(info.lastInsertRowid);
-        log(`📋 Задача #${task.id}: ${myRole} → ${toRole} | ${task.text}`);
-
+        const task  = stmt.getTask.get(info.lastInsertRowid);
         const nTask = normalizeTask(task);
+        log(`📋 Задача #${task.id}: ${myRole} → ${toRole}`);
         ws.send(JSON.stringify({ type: 'TASK_SENT', task: nTask }));
-
         const delivered = sendTo(toRole, { type: 'NEW_TASK', task: nTask });
-        log(`   Доставлено: ${delivered ? 'да' : 'офлайн — сохранено в БД'}`);
-
-        // Всем наблюдателям (КНП видит всё)
-        for (const [role, client] of clients) {
-          if (role === myRole || role === toRole) continue;
+        log(`   Доставлено: ${delivered ? 'да' : 'офлайн'}`);
+        for (const [, client] of clients) {
+          if (client.role === myRole || client.role === toRole) continue;
           if (client.ws.readyState === WebSocket.OPEN) {
-            client.ws.send(JSON.stringify({ type: 'TASK_UPDATE', task: normalizeTask(task) }));
+            try { client.ws.send(JSON.stringify({ type: 'TASK_UPDATE', task: nTask })); } catch {}
           }
         }
         break;
       }
 
-      // ── Смена статуса задачи ──────────────────────────────────────────────
-      // { type: 'UPDATE_TASK', taskId: 3, status: 'принята' }
       case 'UPDATE_TASK': {
-        if (!myRole) return;
-
-        const VALID_STATUSES = ['новая', 'принята', 'в работе', 'выполнена', 'отклонена',
-                               'поражена', 'не поражена', 'доразведка', 'подтверждено', 'подавлено',
-                               'перенесена'];
+        const VALID_STATUSES = ['новая','принята','в работе','выполнена','отклонена',
+          'поражена','не поражена','доразведка','подтверждено','подавлено','перенесена'];
         if (!VALID_STATUSES.includes(msg.status)) {
           ws.send(JSON.stringify({ type: 'ERROR', text: `Неверный статус: ${msg.status}` })); return;
         }
-
         stmt.updateTaskStatus.run({ id: msg.taskId, status: msg.status, updated_by: myRole });
-        // Если задача перенесена — сохраняем новую дату в заметку
         if (msg.status === 'перенесена' && msg.rescheduleDate) {
           db.prepare(`UPDATE tasks SET text = text || ' [перенесена на ' || ? || ']' WHERE id = ?`)
             .run(msg.rescheduleDate, msg.taskId);
         }
         const task = stmt.getTask.get(msg.taskId);
-        if (!task) { ws.send(JSON.stringify({ type: 'ERROR', text: `Задача #${msg.taskId} не найдена` })); return; }
-
+        if (!task) { ws.send(JSON.stringify({ type: 'ERROR', text: `Задача не найдена` })); return; }
         log(`🔄 Задача #${task.id} → ${task.status} (${myRole})`);
         broadcastAll({ type: 'TASK_UPDATED', task: normalizeTask(task) });
         break;
       }
 
-      // ── Обновление карты ──────────────────────────────────────────────────
-      case 'UPDATE': {
-        if (!myRole) return;
+      case 'UPDATE':
         log(`🗺️  Обновление карты от: ${myRole}`);
         broadcast({ type: 'UPDATE', from: myRole, displayName: myName }, myRole);
         break;
-      }
 
-      // ── Создать план ─────────────────────────────────────────────────────
-      // { type: 'CREATE_PLAN', planDate, targetId, targetData, note }
       case 'CREATE_PLAN': {
-        if (!myRole) return;
         if (!msg.planDate || !msg.targetId) {
-          ws.send(JSON.stringify({ type: 'ERROR', text: 'planDate и targetId обязательны' }));
-          return;
+          ws.send(JSON.stringify({ type: 'ERROR', text: 'planDate и targetId обязательны' })); return;
         }
         const info = stmt.insertPlan.run({
           target_id:   String(msg.targetId),
@@ -482,51 +477,32 @@ wss.on('connection', (ws) => {
           created_by:  myRole,
           note:        msg.note || '',
         });
-
-        // INSERT OR IGNORE: если дубль — changes=0, lastInsertRowid=0
         if (info.changes === 0) {
-          log(`⚠️  Дубль плана: цель ${msg.targetId} на ${msg.planDate} уже есть — пропущено`);
-          ws.send(JSON.stringify({ type: 'ERROR', text: `Цель ${msg.targetId} уже запланирована на ${msg.planDate}` }));
-          return;
+          ws.send(JSON.stringify({ type: 'ERROR', text: `Цель ${msg.targetId} уже запланирована на ${msg.planDate}` })); return;
         }
-
         const plan = stmt.getPlanById.get(info.lastInsertRowid);
         log(`📅 План #${plan.id}: ${myRole} → ${plan.plan_date} цель ${plan.target_id}`);
         broadcastAll({ type: 'PLAN_CREATED', plan });
         break;
       }
 
-      // ── Получить планы за дату ────────────────────────────────────────────
-      // { type: 'GET_PLANS', planDate }
       case 'GET_PLANS': {
         if (!msg.planDate) return;
-        // Отдаём только неопубликованные — опубликованные уже есть в AstraMap
-        const plans = stmt.getPlansForDate.all(msg.planDate)
-          .filter(p => !p.published);
+        const plans = stmt.getPlansForDate.all(msg.planDate).filter(p => !p.published);
         ws.send(JSON.stringify({ type: 'PLANS_FOR_DATE', planDate: msg.planDate, plans }));
         break;
       }
 
-      // ── Удалить план ──────────────────────────────────────────────────────
-      // { type: 'DELETE_PLAN', planId }
-      case 'DELETE_PLAN': {
-        if (!myRole) return;
+      case 'DELETE_PLAN':
         stmt.deletePlan.run(msg.planId);
         broadcastAll({ type: 'PLAN_DELETED', planId: msg.planId });
         break;
-      }
 
-      // ── Получить черновые планы за дату ─────────────────────────────────────
       case 'GET_DRAFT_CHECK': {
-        // Проверяем есть ли неопубликованные планы за дату
         if (!msg.planDate) return;
         const plans = stmt.getUnpublishedPlans.all(msg.planDate);
         if (plans.length > 0) {
-          ws.send(JSON.stringify({
-            type: 'DRAFT_EXISTS',
-            planDate: msg.planDate,
-            count: plans.length
-          }));
+          ws.send(JSON.stringify({ type: 'DRAFT_EXISTS', planDate: msg.planDate, count: plans.length }));
         }
         break;
       }
@@ -538,18 +514,13 @@ wss.on('connection', (ws) => {
         break;
       }
 
-      // ── Отметить план как опубликованный ─────────────────────────────────────
       case 'MARK_PUBLISHED': {
-        if (!myRole || !msg.planId) return;
+        if (!msg.planId) return;
         stmt.markPlanPublished.run(msg.planId);
         const plan = stmt.getPlanById.get(msg.planId);
         broadcastAll({ type: 'PLAN_PUBLISHED', plan });
         break;
       }
-
-      case 'PING':
-        ws.send(JSON.stringify({ type: 'PONG' }));
-        break;
 
       default:
         log(`⚠️  Неизвестный тип: ${msg.type}`);
@@ -557,6 +528,7 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
+    clearTimeout(authTimeout);
     if (myAstraId) {
       clients.delete(myAstraId);
       log(`🔴 ${myName || myRole} [${myRole}] отключился`);
@@ -565,10 +537,11 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('error', (err) => {
-    log(`❌ WS ошибка (${myName || myRole || 'незарег.'}): ${err.message}`);
+    log(`❌ WS ошибка (${myName || 'незарег.'}): ${err.message}`);
   });
 });
 
-log(`🟢 WS-сервер запущен на порту 5000 (ws://)`);
+log(`🟢 WS-сервер запущен на порту 5000`);
 log(`   БД: ${path.join(__dirname, 'data.db')}`);
 log(`   Расчёты: ${VALID_ROLES.join(', ')}`);
+log(`   Управление токенами: node server.js --issue <username> [role] [officeId]`);

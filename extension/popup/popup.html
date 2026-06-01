@@ -24,7 +24,6 @@
     }
     .header h1 { font-size: 14px; margin: 0; color: #1a1a2e; }
     .header .version { font-size: 10px; color: #999; margin-top: 2px; }
-
     .row {
       display: flex;
       justify-content: space-between;
@@ -33,7 +32,6 @@
     }
     .label { color: #666; }
     .value { font-weight: 500; }
-
     .status-dot {
       display: inline-block;
       width: 8px; height: 8px;
@@ -42,9 +40,7 @@
     }
     .status-dot.connected    { background: #28a745; }
     .status-dot.disconnected { background: #dc3545; }
-
     .divider { border: none; border-top: 1px solid #e0e0e0; margin: 8px 0; }
-
     button {
       width: 100%;
       margin-top: 6px;
@@ -58,6 +54,8 @@
       text-align: center;
     }
     button:hover { background: #f0f4f8; }
+    #btnResetToken { color: #dc3545; border-color: #dc3545; }
+    #btnResetToken:hover { background: #fff0f0; }
   </style>
 </head>
 <body>
@@ -86,9 +84,15 @@
     <span class="value" id="userRole">—</span>
   </div>
 
+  <div class="row">
+    <span class="label">Токен</span>
+    <span class="value" id="tokenStatus">—</span>
+  </div>
+
   <hr class="divider">
 
   <button id="btnClearCache">🗑 Очистить кэш</button>
+  <button id="btnResetToken">🔑 Сбросить токен</button>
 
   <script src="popup.js"></script>
 </body>
