@@ -1,48 +1,92 @@
 // content/ui/tasks.js
 
 const STATUS_COLORS = {
-  'новая':'#fd7e14','принята':'#17a2b8','в работе':'#007bff',
-  'выполнена':'#28a745','поражена':'#28a745','не поражена':'#dc3545',
-  'доразведка':'#6f42c1','подтверждено':'#28a745','подавлено':'#20c997',
-  'перенесена':'#0097a7','отклонена':'#6c757d',
+  'новая':        '#fd7e14',
+  'принята':      '#17a2b8',
+  'в работе':     '#007bff',
+  'выполнена':    '#28a745',
+  'поражена':     '#28a745',
+  'не поражена':  '#dc3545',
+  'доразведка':   '#6f42c1',
+  'подтверждено': '#28a745',
+  'подавлено':    '#20c997',
+  'перенесена':   '#0097a7',
+  'отклонена':    '#6c757d',
+  'уничтожена':   '#dc3545',
 };
 
-const FINAL_STATUSES = ['поражена','не поражена','подтверждено','подавлено','отклонена'];
+// Только уничтожена блокирует кнопки — цель всегда остаётся в таблице
+const FINAL_STATUSES = ['уничтожена'];
 
-// ── Ячейка задачи в таблице ───────────────────────────────────────────────────
+// ── Ячейка задачи в таблице целей ────────────────────────────────────────────
 function renderTaskCell(cell, targetId, targetTitle, canAssign = true) {
   const tasksByTarget = store.get('tasksByTarget');
   const task = tasksByTarget[targetId] || null;
   cell.innerHTML = '';
 
-  if (task) {
+  // Статусы после которых можно ставить новую задачу
+  const CLOSED_STATUSES = [
+    'уничтожена', 'поражена', 'подтверждено',
+    'подавлено', 'отклонена', 'не поражена'
+  ];
+
+  const taskClosed = task && CLOSED_STATUSES.includes(task.status);
+
+  if (task && !taskClosed) {
+    // Активная задача — показываем статус
     const color  = STATUS_COLORS[task.status] || '#888';
     const toRole = task.to_role || task.to || '?';
+    const toOff  = task.to_office
+      ? ` [${OFFICES[task.to_office]?.short || task.to_office}]` : '';
     const wrap   = document.createElement('div');
     wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:4px;';
     wrap.innerHTML = `
-      <div style="font-size:11px;color:#555;">→ <b>${toRole}</b></div>
-      <span style="background:${color};color:white;padding:1px 8px;border-radius:10px;font-size:11px;white-space:nowrap;">${task.status}</span>
+      <div style="font-size:11px;color:#555;">→ <b>${toRole}${toOff}</b></div>
+      <span style="background:${color};color:white;padding:1px 8px;border-radius:10px;
+                   font-size:11px;white-space:nowrap;">${task.status}</span>
     `;
     cell.appendChild(wrap);
   } else if (canAssign) {
+    // Нет задачи или задача закрыта — показываем кнопку новой задачи
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:4px;';
+
+    // Если была предыдущая задача — показываем её финальный статус маленьким
+    if (task && taskClosed) {
+      const color = STATUS_COLORS[task.status] || '#888';
+      wrap.innerHTML = `
+        <span style="background:${color};color:white;padding:1px 6px;border-radius:8px;
+                     font-size:10px;opacity:0.7;margin-bottom:2px;">${task.status}</span>
+      `;
+    }
+
     const btn = document.createElement('button');
-    btn.style.cssText = 'padding:4px 10px;background:#fd7e14;color:white;border:none;border-radius:5px;cursor:pointer;font-size:12px;white-space:nowrap;';
+    btn.style.cssText = 'padding:4px 10px;background:#fd7e14;color:white;border:none;' +
+                        'border-radius:5px;cursor:pointer;font-size:12px;white-space:nowrap;';
     btn.textContent = '+ Задача';
     btn.addEventListener('click', () => openNewTaskModal(targetId, targetTitle));
-    cell.appendChild(btn);
+    wrap.appendChild(btn);
+    cell.appendChild(wrap);
   } else {
     cell.innerHTML = '<span style="color:#ccc;font-size:11px;">—</span>';
   }
 }
-
-// ── Открыть модал новой задачи ────────────────────────────────────────────────
+// Обновить tasksByTarget в store — вызывается при загрузке истории
+function _updateTasksByTarget(task) {
+  const tid = task?.target_id || task?.targetId;
+  if (!tid) return;
+  const tasksByTarget = store.get('tasksByTarget');
+  // Берём задачу с наибольшим id (самую свежую)
+  if (!tasksByTarget[tid] || task.id >= tasksByTarget[tid].id) {
+    tasksByTarget[tid] = task;
+  }
+}
+// ── Открыть модал новой задаgrep -n "loadPlansForDate\|GET_PLANS\|PLANS_LIST\|tasksByTarget" /opt/astramap/extension/content/ws/wsHandlers.jsчи ────────────────────────────────────────────────
 function openNewTaskModal(targetId, targetTitle) {
   if (!myRole) { showToast('Сначала войдите — расчёт не определён', 'error'); return; }
   const modal = document.querySelector('#newTaskModal');
   if (!modal) return;
 
-  // Заполняем список целей
   const targetSelect = modal.querySelector('#taskTargetSelect');
   if (targetSelect) {
     targetSelect.innerHTML = '<option value="">— без привязки к цели —</option>';
@@ -57,7 +101,6 @@ function openNewTaskModal(targetId, targetTitle) {
     });
   }
 
-  // Заполняем подразделениеы — только доступные по правам
   const myOfficeId = store.get('myOfficeId') || 'HQ';
   const officeSelect = modal.querySelector('#taskOfficeSelect');
   if (officeSelect) {
@@ -69,12 +112,10 @@ function openNewTaskModal(targetId, targetTitle) {
       opt.textContent = office.name + (id === myOfficeId ? ' (свой)' : '');
       officeSelect.appendChild(opt);
     });
-    // При смене подразделениеа — обновляем список расчётов
     officeSelect.onchange = () => _fillRolesForOffice(officeSelect.value);
     _fillRolesForOffice(myOfficeId);
   }
 
-  // Переключаемся на панель задач если нужно
   const tasksPanel   = document.querySelector('#tasksPanel');
   const tableWrapper = document.querySelector('.table-wrapper');
   if (tasksPanel && tasksPanel.style.display === 'none') {
@@ -101,7 +142,7 @@ function _fillRolesForOffice(officeId) {
   });
 }
 
-// ── Принять / Отклонить задачу ────────────────────────────────────────────────
+// ── Принять / Отклонить ───────────────────────────────────────────────────────
 function acceptTask(taskId) {
   wsSend({ type: 'UPDATE_TASK', taskId, status: 'принята' });
   unreadTaskCount = Math.max(0, unreadTaskCount - 1);
@@ -163,17 +204,16 @@ function updateRoleTag() {
   const tag = document.querySelector('#myRoleTag');
   if (!tag) return;
   if (myRole && myDisplayName) {
-    const officeId   = store.get('myOfficeId') || 'HQ';
+    const officeId    = store.get('myOfficeId') || 'HQ';
     const officeShort = OFFICES[officeId]?.short || officeId;
-    tag.textContent = `${myDisplayName} [${myRole} · ${officeShort}]`;
+    tag.textContent   = `${myDisplayName} [${myRole} · ${officeShort}]`;
     tag.style.background = OFFICES[officeId]?.isHQ ? '#1a5276' : '#4a235a';
   } else {
     tag.textContent = '🔄 Определяю расчёт...';
   }
 }
 
-// ── Индикатор онлайн по подразделениеам ────────────────────────────────────────────────
-// online — объект: { HQ: ['рэб','арт.'], o177: ['разведка'] }
+// ── Индикатор онлайн по подразделениям ───────────────────────────────────────
 let _lastOnlineRoles = {};
 
 function updateOnlineIndicator(online) {
@@ -184,11 +224,8 @@ function updateOnlineIndicator(online) {
 function _renderOnlineIndicator() {
   const el = document.querySelector('#online-indicator');
   if (!el) return;
-
-  // OFFICES может быть не определён если config.js ещё не загружен
   if (typeof OFFICES === 'undefined') return;
 
-  // Если нет данных — показываем всех офлайн (не скрываем индикатор)
   const myOfficeId = store.get('myOfficeId') || 'HQ';
   const parts = [];
 
@@ -197,7 +234,6 @@ function _renderOnlineIndicator() {
     const allRoles = Object.keys(office.roles);
     if (allRoles.length === 0) return;
 
-    // Название подразделениеа — жирнее для своего
     const isMine = officeId === myOfficeId;
     const chips  = allRoles.map(r => {
       const on  = onlineInOffice.includes(r);
@@ -251,17 +287,26 @@ function renderTaskRow(task) {
 }
 
 function updateTaskRowEl(tr, task) {
-  const color    = STATUS_COLORS[task.status] || '#888';
-  const fromRole   = (task.from_role || task.from || '?') + fromOffice;
-  const toRole     = (task.to_role   || task.to   || '?') + toOffice;
-  const isMyTask = toRole === myRole;
-  const dateStr  = task.created_at || task.createdAt || '';
-  const time     = dateStr ? new Date(dateStr).toLocaleTimeString('ru-RU', {hour:'2-digit',minute:'2-digit'}) : '';
+  const color = STATUS_COLORS[task.status] || '#888';
 
+  // Подразделение отправителя и получателя
+  const fromOffice = task.from_office
+    ? ` [${OFFICES[task.from_office]?.short || task.from_office}]` : '';
+  const toOffice   = task.to_office
+    ? ` [${OFFICES[task.to_office]?.short   || task.to_office}]`   : '';
 
-  // подразделение отправителя/получателя (если сервер присылает)
-  const fromOffice = task.from_office ? ` [${OFFICES[task.from_office]?.short || task.from_office}]` : '';
-  const toOffice   = task.to_office   ? ` [${OFFICES[task.to_office]?.short   || task.to_office}]`   : '';
+  const fromRole = (task.from_role || task.from || '?') + fromOffice;
+  const toRole   = (task.to_role   || task.to   || '?') + toOffice;
+
+  // isMyTask — проверяем и роль и подразделение
+  const myOfficeId = store.get('myOfficeId') || 'HQ';
+  const isMyTask   = (task.to_role === myRole || task.to === myRole)
+                  && (!task.to_office || task.to_office === myOfficeId);
+
+  const dateStr = task.created_at || task.createdAt || '';
+  const time    = dateStr
+    ? new Date(dateStr).toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'})
+    : '';
 
   const ACTION_STATUSES = [
     {value:'принята',      label:'✅ Принята'},
@@ -271,19 +316,24 @@ function updateTaskRowEl(tr, task) {
     {value:'доразведка',   label:'🔍 Доразведка'},
     {value:'подтверждено', label:'✔️ Подтверждено'},
     {value:'подавлено',    label:'📡 Подавлено'},
+    {value:'перенесена',   label:'📅 Перенести'},
+    {value:'уничтожена',   label:'🔥 Уничтожена'},
     {value:'отклонена',    label:'🚫 Отклонить'},
   ];
 
+  // canAct = false только если статус уничтожена
   const canAct = isMyTask && !FINAL_STATUSES.includes(task.status);
 
   tr.innerHTML = `
-    <td style="font-size:12px;color:#666;padding:6px 8px;">${time}</td>
-    <td style="font-size:12px;padding:6px 8px;">${fromRole}${fromOffice}</td>
-    <td style="font-size:12px;padding:6px 8px;">${toRole}${toOffice}</td>
+    <td style="font-size:12px;color:#666;padding:6px 8px;white-space:nowrap;">${time}</td>
+    <td style="font-size:12px;padding:6px 8px;">${fromRole}</td>
+    <td style="font-size:12px;padding:6px 8px;">${toRole}</td>
     <td style="font-size:12px;padding:6px 8px;">
       ${task.text}
-      ${task.targetTitle   ? `<br><span style="color:#888;font-size:11px;">📍 ${task.targetTitle}</span>`   : ''}
-      ${task.target_title && !task.targetTitle ? `<br><span style="color:#888;font-size:11px;">📍 ${task.target_title}</span>` : ''}
+      ${task.targetTitle
+        ? `<br><span style="color:#888;font-size:11px;">📍 ${task.targetTitle}</span>` : ''}
+      ${task.target_title && !task.targetTitle
+        ? `<br><span style="color:#888;font-size:11px;">📍 ${task.target_title}</span>` : ''}
     </td>
     <td style="padding:6px 8px;">
       <span style="background:${color};color:white;padding:2px 8px;border-radius:10px;font-size:11px;white-space:nowrap;">${task.status}</span>
@@ -303,13 +353,26 @@ function updateTaskRowEl(tr, task) {
       opt.value = s.value; opt.textContent = s.label;
       sel.appendChild(opt);
     });
-    sel.addEventListener('change', function() { if (this.value) changeTaskStatus(task.id, this.value); });
+    sel.addEventListener('change', function() {
+      if (!this.value) return;
+      if (this.value === 'перенесена') {
+        showRescheduleModal(task.id);
+        this.value = '';
+        return;
+      }
+      changeTaskStatus(task.id, this.value);
+    });
     actionTd.appendChild(sel);
   } else {
-    actionTd.innerHTML = `<span style="font-size:11px;color:#888;">${isMyTask ? task.status : '—'}</span>`;
+    // Задача уничтожена или не наша — показываем финальный статус без кнопок
+    const label = FINAL_STATUSES.includes(task.status)
+      ? `<span style="font-size:11px;color:#dc3545;font-weight:600;">🔥 ${task.status}</span>`
+      : `<span style="font-size:11px;color:#888;">—</span>`;
+    actionTd.innerHTML = label;
   }
 }
 
+// ── Обновление ячеек задач в таблице целей ────────────────────────────────────
 function refreshAllTaskCells() {
   document.querySelectorAll('#statusTable tbody tr').forEach(row => {
     const targetId    = row.dataset.targetId;

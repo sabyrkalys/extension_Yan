@@ -79,18 +79,24 @@ function handleWsMessage(msg) {
 
     // ── Список задач при входе ────────────────────────────────────────────────
     case 'PENDING_TASKS': {
-      const seenTaskIds = store.get('seenTaskIds');
-      (msg.tasks || []).forEach(task => {
-        addTaskToPanel(task);
-        if (!seenTaskIds.has(task.id)) { seenTaskIds.add(task.id); unreadTaskCount++; }
-      });
-      updateTaskBadge();
-      break;
-    }
+  const seenTaskIds = store.get('seenTaskIds');
+  (msg.tasks || []).forEach(task => {
+    addTaskToPanel(task);
+    _updateTasksByTarget(task);
+    if (!seenTaskIds.has(task.id)) { seenTaskIds.add(task.id); unreadTaskCount++; }
+  });
+  updateTaskBadge();
+  refreshAllTaskCells();
+  break;
+}
 
-    case 'TASKS_HISTORY':
-      (msg.tasks || []).forEach(task => addTaskToPanel(task));
-      break;
+case 'TASKS_HISTORY':
+  (msg.tasks || []).forEach(task => {
+    addTaskToPanel(task);
+    _updateTasksByTarget(task);
+  });
+  refreshAllTaskCells();
+  break;
 
     // ── Планирование ──────────────────────────────────────────────────────────
     case 'PLAN_CREATED':
