@@ -252,15 +252,16 @@ function renderTaskRow(task) {
 
 function updateTaskRowEl(tr, task) {
   const color    = STATUS_COLORS[task.status] || '#888';
-  const fromRole = task.from_role || task.from || '?';
-  const toRole   = task.to_role   || task.to   || '?';
+  const fromRole   = (task.from_role || task.from || '?') + fromOffice;
+  const toRole     = (task.to_role   || task.to   || '?') + toOffice;
   const isMyTask = toRole === myRole;
   const dateStr  = task.created_at || task.createdAt || '';
   const time     = dateStr ? new Date(dateStr).toLocaleTimeString('ru-RU', {hour:'2-digit',minute:'2-digit'}) : '';
 
+
   // подразделение отправителя/получателя (если сервер присылает)
-  const fromOffice = task.from_office ? `<span style="font-size:9px;background:#2d4a6a;color:#90cdf4;padding:1px 4px;border-radius:3px;margin-left:3px;">${task.from_office}</span>` : '';
-  const toOffice   = task.to_office   ? `<span style="font-size:9px;background:#2d4a6a;color:#90cdf4;padding:1px 4px;border-radius:3px;margin-left:3px;">${task.to_office}</span>`   : '';
+  const fromOffice = task.from_office ? ` [${OFFICES[task.from_office]?.short || task.from_office}]` : '';
+  const toOffice   = task.to_office   ? ` [${OFFICES[task.to_office]?.short   || task.to_office}]`   : '';
 
   const ACTION_STATUSES = [
     {value:'принята',      label:'✅ Принята'},

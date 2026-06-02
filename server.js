@@ -236,9 +236,9 @@ const stmt = {
 
   // Задачи
   insertTask: db.prepare(`
-    INSERT INTO tasks (from_role, to_role, target_id, target_title, text, status)
-    VALUES (@from_role, @to_role, @target_id, @target_title, @text, 'новая')
-  `),
+  INSERT INTO tasks (from_role, to_role, from_office, to_office, target_id, target_title, text, status)
+  VALUES (@from_role, @to_role, @from_office, @to_office, @target_id, @target_title, @text, 'новая')
+`),
   updateTaskStatus: db.prepare(`
     UPDATE tasks SET status = @status, updated_at = datetime('now'), updated_by = @updated_by
     WHERE id = @id
@@ -451,6 +451,8 @@ wss.on('connection', (ws, req) => {
         const info = stmt.insertTask.run({
           from_role:    myRole,
           to_role:      toRole,
+          from_office:  myOfficeId || 'HQ',
+          to_office:    toOfficeId || myOfficeId || 'HQ',
           target_id:    msg.targetId   || null,
           target_title: msg.targetTitle || '',
           text:         msg.text.trim(),
