@@ -1,0 +1,29 @@
+# Секреты и ключи — НИКОГДА не коммитить
+key.pem
+cert.pem
+*.pem
+*.crt
+*.key
+
+# База данных
+data.db
+data.db-shm
+data.db-wal
+*.db
+*.db-shm
+*.db-wal
+
+# Зависимости
+node_modules/
+
+# Системные
+.DS_Store
+Thumbs.db
+*.log
+
+# Конфиги среды
+.env
+.env.*
+
+# SSL конфиг (содержит IP)
+ssl.cnf
