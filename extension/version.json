@@ -1,0 +1,11 @@
+{
+  "version": "1.0.0",
+  "date": "2026-05-22",
+  "files": [
+    "manifest.json",
+    "content.js",
+    "background.js",
+    "inject.js"
+  ],
+  "changelog": "Первый релиз"
+}
