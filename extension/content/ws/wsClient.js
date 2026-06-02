@@ -1,24 +1,63 @@
 // content/ws/wsClient.js
-// Изменения: добавлена передача токена при REGISTER
+// Изменения:
+// - передача токена при REGISTER
+// - дублирование токена в localStorage (резерв для Android)
+// - не удаляем токен автоматически при AUTH_ERROR
+// - clearExtensionToken() чистит оба хранилища
 
 let bgPort = null;
 let _reconnectTimer = null;
 
 try { chrome.storage.local.set({ wsUrl: WS_URL }); } catch {}
 
-// ── Получить токен из storage ────────────────────────────────────────────────
-// Токен хранится в chrome.storage.local (не в localStorage — безопаснее,
-// так как недоступен со страницы).
+// ── Сохранить токен — пишем в оба хранилища ──────────────────────────────────
+function saveExtensionToken(token, callback) {
+  try { localStorage.setItem('astra_extension_token', token); } catch {}
+  try {
+    chrome.storage.local.set({ extensionToken: token }, () => {
+      if (callback) callback();
+    });
+  } catch { if (callback) callback(); }
+}
+
+// ── Получить токен — проверяем оба хранилища ─────────────────────────────────
 function getExtensionToken(callback) {
   try {
     chrome.storage.local.get(['extensionToken'], (result) => {
-      callback(result.extensionToken || null);
+      if (result.extensionToken) {
+        callback(result.extensionToken);
+        return;
+      }
+      // Резерв — берём из localStorage
+      try {
+        const fallback = localStorage.getItem('astra_extension_token');
+        if (fallback) {
+          chrome.storage.local.set({ extensionToken: fallback });
+          callback(fallback);
+          return;
+        }
+      } catch {}
+      callback(null);
     });
   } catch {
-    callback(null);
+    try {
+      const fallback = localStorage.getItem('astra_extension_token');
+      callback(fallback || null);
+    } catch { callback(null); }
   }
 }
 
+// ── Удалить токен из обоих хранилищ ──────────────────────────────────────────
+function clearExtensionToken(callback) {
+  try { localStorage.removeItem('astra_extension_token'); } catch {}
+  try {
+    chrome.storage.local.remove('extensionToken', () => {
+      if (callback) callback();
+    });
+  } catch { if (callback) callback(); }
+}
+
+// ── WebSocket ─────────────────────────────────────────────────────────────────
 function connectWS() {
   if (!chrome.runtime?.id) return;
   if (bgPort) return;
@@ -41,12 +80,10 @@ function connectWS() {
         return;
       }
 
-      // Ошибка авторизации — токен недействителен
+      // AUTH_ERROR — НЕ удаляем токен автоматически
       if (msg.type === 'AUTH_ERROR') {
         console.error('[ws] ❌ Ошибка авторизации:', msg.text);
-        showToast('❌ Ошибка авторизации: ' + msg.text, 'error');
-        // Сбрасываем токен — пользователь должен ввести новый
-        try { chrome.storage.local.remove('extensionToken'); } catch {}
+        showToast('❌ ' + msg.text + ' — обратитесь к администратору', 'error');
         return;
       }
 
@@ -78,14 +115,13 @@ function wsSend(data) {
   console.warn('[ws] Не подключён, сообщение потеряно:', data.type);
 }
 
-// Регистрация — всегда с токеном
+// ── Регистрация — всегда с токеном ───────────────────────────────────────────
 function wsRegister() {
   const username = store.get('myUsername');
   if (!username) return;
 
   getExtensionToken((token) => {
     if (!token) {
-      // Токен не задан — показываем форму ввода
       showTokenInputModal();
       return;
     }
@@ -101,7 +137,7 @@ function wsRegister() {
   });
 }
 
-// Явная регистрация с передачей всех параметров
+// ── Явная регистрация с передачей всех параметров ────────────────────────────
 function wsRegisterWithUser(userId, username, displayName, role) {
   const officeId = store.get('myOfficeId') || resolveOfficeAndRole(username)?.officeId || 'HQ';
 
@@ -115,7 +151,6 @@ function wsRegisterWithUser(userId, username, displayName, role) {
 }
 
 // ── Модал ввода токена ────────────────────────────────────────────────────────
-// Показывается при первом запуске или если токен не задан/отозван
 function showTokenInputModal() {
   document.querySelector('#token-input-modal')?.remove();
 
@@ -130,7 +165,7 @@ function showTokenInputModal() {
     <div style="background:white;border-radius:12px;padding:28px;width:340px;box-shadow:0 8px 32px rgba(0,0,0,0.3);">
       <h3 style="margin:0 0 8px;color:#1e3a5f;font-size:17px;">🔑 Токен доступа</h3>
       <p style="font-size:13px;color:#666;margin:0 0 16px;line-height:1.5;">
-        Для работы расширения введите токен, выданный администратором.
+        Введите токен, выданный администратором.
       </p>
       <input
         id="token-input-field"
@@ -153,23 +188,30 @@ function showTokenInputModal() {
 
   document.body.appendChild(modal);
 
-  const input  = modal.querySelector('#token-input-field');
-  const errEl  = modal.querySelector('#token-input-error');
-  const btn    = modal.querySelector('#token-input-confirm');
+  const input = modal.querySelector('#token-input-field');
+  const errEl = modal.querySelector('#token-input-error');
+  const btn   = modal.querySelector('#token-input-confirm');
 
   input.focus();
 
   const confirm = () => {
-    const token = input.value.trim();
+    // Чистим пробелы и переносы (частая проблема при копировании из Telegram)
+    const token = input.value.trim().replace(/\s+/g, '');
     if (token.length < 16) {
-      errEl.textContent = 'Токен слишком короткий';
+      errEl.textContent = 'Токен слишком короткий — проверьте что скопировали полностью';
       errEl.style.display = 'block';
       return;
     }
-    // Сохраняем токен и убираем модал
-    chrome.storage.local.set({ extensionToken: token }, () => {
+    if (token.length !== 64) {
+      errEl.textContent = `Неверная длина: ${token.length} символов (нужно 64)`;
+      errEl.style.display = 'block';
+      return;
+    }
+    errEl.style.display = 'none';
+
+    // Сохраняем в оба хранилища
+    saveExtensionToken(token, () => {
       modal.remove();
-      // Повторяем регистрацию теперь с токеном
       const username = store.get('myUsername');
       if (username) {
         wsRegisterWithUser(

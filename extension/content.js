@@ -417,12 +417,12 @@ function handleUserIdentified(userId, username, displayName) {
   if (resolved) {
     myRole = resolved.role;
     store.set('myOfficeId', resolved.officeId);
-    console.log('[content] ✅ Роль определена:', myRole, '| Офис:', resolved.officeId);
+    console.log('[content] ✅ Роль определена:', myRole, '| подразделение:', resolved.officeId);
   } else {
     const localRole = resolveRoleLocally(username);
     if (localRole) { myRole = localRole; }
     store.set('myOfficeId', store.get('myOfficeId') || 'HQ');
-    console.log('[content] ⚠️ Роль/офис не найдены для:', username, '→ используем HQ');
+    console.log('[content] ⚠️ Роль/подразделение не найдены для:', username, '→ используем HQ');
   }
 
   wsRegisterWithUser(userId, username, displayName, myRole);

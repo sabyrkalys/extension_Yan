@@ -57,7 +57,7 @@ function openNewTaskModal(targetId, targetTitle) {
     });
   }
 
-  // Заполняем офисы — только доступные по правам
+  // Заполняем подразделениеы — только доступные по правам
   const myOfficeId = store.get('myOfficeId') || 'HQ';
   const officeSelect = modal.querySelector('#taskOfficeSelect');
   if (officeSelect) {
@@ -69,7 +69,7 @@ function openNewTaskModal(targetId, targetTitle) {
       opt.textContent = office.name + (id === myOfficeId ? ' (свой)' : '');
       officeSelect.appendChild(opt);
     });
-    // При смене офиса — обновляем список расчётов
+    // При смене подразделениеа — обновляем список расчётов
     officeSelect.onchange = () => _fillRolesForOffice(officeSelect.value);
     _fillRolesForOffice(myOfficeId);
   }
@@ -172,7 +172,7 @@ function updateRoleTag() {
   }
 }
 
-// ── Индикатор онлайн по офисам ────────────────────────────────────────────────
+// ── Индикатор онлайн по подразделениеам ────────────────────────────────────────────────
 // online — объект: { HQ: ['рэб','арт.'], o177: ['разведка'] }
 let _lastOnlineRoles = {};
 
@@ -197,7 +197,7 @@ function _renderOnlineIndicator() {
     const allRoles = Object.keys(office.roles);
     if (allRoles.length === 0) return;
 
-    // Название офиса — жирнее для своего
+    // Название подразделениеа — жирнее для своего
     const isMine = officeId === myOfficeId;
     const chips  = allRoles.map(r => {
       const on  = onlineInOffice.includes(r);
@@ -258,7 +258,7 @@ function updateTaskRowEl(tr, task) {
   const dateStr  = task.created_at || task.createdAt || '';
   const time     = dateStr ? new Date(dateStr).toLocaleTimeString('ru-RU', {hour:'2-digit',minute:'2-digit'}) : '';
 
-  // Офис отправителя/получателя (если сервер присылает)
+  // подразделение отправителя/получателя (если сервер присылает)
   const fromOffice = task.from_office ? `<span style="font-size:9px;background:#2d4a6a;color:#90cdf4;padding:1px 4px;border-radius:3px;margin-left:3px;">${task.from_office}</span>` : '';
   const toOffice   = task.to_office   ? `<span style="font-size:9px;background:#2d4a6a;color:#90cdf4;padding:1px 4px;border-radius:3px;margin-left:3px;">${task.to_office}</span>`   : '';
 

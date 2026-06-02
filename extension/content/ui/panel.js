@@ -153,13 +153,13 @@ function createPopup() {
     <div id="newTaskModal" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:none;justify-content:center;align-items:center;z-index:10001;">
       <div style="background:white;width:90%;max-width:420px;border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:10px;">
         <h3 style="margin:0;font-size:16px;">Новая задача</h3>
-        <label style="font-size:12px;color:#555;">Офис получателя:</label>
+        <label style="font-size:12px;color:#555;">подразделение получателя:</label>
         <select id="taskOfficeSelect" style="padding:6px;border-radius:5px;border:1px solid #ccc;">
-          <option value="">— выберите офис —</option>
+          <option value="">— выберите подразделение —</option>
         </select>
         <label style="font-size:12px;color:#555;">Кому:</label>
         <select id="taskTo" style="padding:6px;border-radius:5px;border:1px solid #ccc;">
-          <option value="">— сначала выберите офис —</option>
+          <option value="">— сначала выберите подразделение —</option>
         </select>
         <label style="font-size:12px;color:#555;">Объект (необязательно):</label>
         <select id="taskTargetSelect" style="padding:6px;border-radius:5px;border:1px solid #ccc;">
@@ -385,7 +385,7 @@ function createPopup() {
     if (!text) { showToast('Введите текст задачи', 'error'); return; }
     if (!myRole) { showToast('Сначала выберите свой расчёт', 'error'); return; }
     if (!canAssignTask(myOfficeId, toOfficeId)) {
-      showToast('Нет прав назначать задачи этому офису', 'error'); return;
+      showToast('Нет прав назначать задачи этому подразделениеу', 'error'); return;
     }
 
     wsSend({ type: 'NEW_TASK', to, text, targetId, targetTitle, toOfficeId, fromOfficeId: myOfficeId });

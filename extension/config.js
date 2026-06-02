@@ -45,16 +45,16 @@ const OFFICES = {
       'артиллерия': ['Stena_MP'],
       'инженеры':   ['Kometa_MP', 'Prapor_MP'],
       'бпс':        ['Luka_MP'],
-      'гооп':       ['Sayn_MP'],
+      'гооп':       ['Sayn_MP', 'More_MP'],
       'босс':       ['Polyana_MP'],
     },
   },
-  'o177': {
+  '177': {
     name:  '177 ОГВПМП',
     short: '177',
     isHQ:  false,
     roles: {
-      'админ':      ['More_MP', 'Yastreb_177_OGvpMP'],
+      'админ':      ['Yastreb_177_OGvpMP'],
       'рэб':        [],
       'разведка':   [],
       'артиллерия': [],
@@ -64,7 +64,7 @@ const OFFICES = {
       'босс':       [],
     },
   },
-  'o61': {
+  '61': {
     name:  '61 подразделение',
     short: '61',
     isHQ:  false,
@@ -79,7 +79,7 @@ const OFFICES = {
       'босс':       [],
     },
   },
-  'o114': {
+  '114': {
     name:  '114 подразделение',
     short: '114',
     isHQ:  false,
