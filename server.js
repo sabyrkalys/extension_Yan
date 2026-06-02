@@ -35,7 +35,7 @@ if (args[0] === '--issue' || args[0] === '--revoke' || args[0] === '--list') {
       INSERT INTO tokens (token, username, role, office_id, active, issued_at)
       VALUES (?, ?, ?, ?, 1, datetime('now'))
     `).run(token, username, role, officeId);
-    console.log(`\n✅ Токен выдан для "${username}" [${role || 'роль не задана'}] офис: ${officeId}`);
+    console.log(`\n✅ Токен выдан для "${username}" [${role || 'роль не задана'}] подразделение: ${officeId}`);
     console.log(`🔑 Токен: ${token}\n`);
 
   } else if (args[0] === '--revoke') {
@@ -51,7 +51,7 @@ if (args[0] === '--issue' || args[0] === '--revoke' || args[0] === '--list') {
     console.log('\nТокены:\n');
     rows.forEach(r => {
       const status = r.active ? '✅ активен' : '❌ отозван';
-      console.log(`${status} | ${r.username} | ${r.role || '—'} | офис: ${r.office_id} | выдан: ${r.issued_at}`);
+      console.log(`${status} | ${r.username} | ${r.role || '—'} | подразделение: ${r.office_id} | выдан: ${r.issued_at}`);
       console.log(`         ${r.token}\n`);
     });
   }
@@ -388,7 +388,7 @@ wss.on('connection', (ws, req) => {
         return;
       }
 
-      // Офис из токена → из сообщения → HQ
+      // подразделение из токена → из сообщения → HQ
       myOfficeId = (tokenRow.office_id && OFFICES[tokenRow.office_id])
         ? tokenRow.office_id
         : (msg.officeId && OFFICES[msg.officeId] ? msg.officeId : 'HQ');
@@ -443,7 +443,7 @@ wss.on('connection', (ws, req) => {
         }
         const toOfficeId = msg.toOfficeId || myOfficeId;
         if (!canAssignTask(myOfficeId, toOfficeId)) {
-          ws.send(JSON.stringify({ type: 'ERROR', text: 'Нет прав назначать задачи этому офису' })); return;
+          ws.send(JSON.stringify({ type: 'ERROR', text: 'Нет прав назначать задачи этому подразделению' })); return;
         }
         if (!msg.text?.trim()) {
           ws.send(JSON.stringify({ type: 'ERROR', text: 'Текст задачи обязателен' })); return;
