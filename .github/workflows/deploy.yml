@@ -1,31 +1,15 @@
-name: Deploy to VPS
-
-on:
-  push:
-    branches: [ main ]
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout репозитория
-        uses: actions/checkout@v4
-
-      - name: Деплой на VPS
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host:     ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key:      ${{ secrets.VPS_SSH_KEY }}
-          port:     22
-          script: |
+script: |
             set -e
             cd /opt/astramap
 
+            # Если нет .git — инициализируем и привязываем к репо
             if [ ! -d ".git" ]; then
-              git clone https://x-access-token:${{ secrets.GH_TOKEN }}@github.com/${{ github.repository }} .
+              git init
+              git remote add origin https://x-access-token:${{ secrets.GH_TOKEN }}@github.com/${{ github.repository }}.git
+              git fetch origin main
+              git reset --hard origin/main
             else
+              git remote set-url origin https://x-access-token:${{ secrets.GH_TOKEN }}@github.com/${{ github.repository }}.git
               git fetch origin main
               git reset --hard origin/main
             fi
