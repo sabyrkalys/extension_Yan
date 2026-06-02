@@ -1,0 +1,43 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout репозитория
+        uses: actions/checkout@v4
+
+      - name: Деплой на VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key:      ${{ secrets.VPS_SSH_KEY }}
+          port:     22
+          script: |
+            set -e
+            cd /opt/astramap
+
+            if [ ! -d ".git" ]; then
+              git clone https://x-access-token:${{ secrets.GH_TOKEN }}@github.com/${{ github.repository }} .
+            else
+              git fetch origin main
+              git reset --hard origin/main
+            fi
+
+            npm ci --omit=dev
+
+            if pm2 show astramap > /dev/null 2>&1; then
+              pm2 reload astramap --update-env
+            else
+              pm2 start server.js --name astramap
+              pm2 save
+            fi
+
+            echo "✅ Деплой завершён"
+            pm2 status astramap
