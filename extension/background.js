@@ -8,14 +8,14 @@ let ws = null;
 let reconnectTimer = null;
 const ports = new Set();
 
-// ── Проверка активных вкладок astramaps ───────────────────────────────────────
+// ── Проверка активных вкладок astramaps ──────────────────────────────────────
 function hasAstramapsTabs(callback) {
   chrome.tabs.query({ url: 'https://center.astramaps.ru/*' }, (tabs) => {
     callback(tabs.length > 0);
   });
 }
 
-// ── Keep-alive (MV3) ──────────────────────────────────────────────────────────
+// ── Keep-alive (MV3) ─────────────────────────────────────────────────────────
 chrome.alarms.create('wsKeepAlive', { periodInMinutes: 0.33 }); // ~20 сек
 
 chrome.alarms.onAlarm.addListener((alarm) => {
@@ -23,14 +23,12 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
   hasAstramapsTabs((hasTabs) => {
     if (!hasTabs) {
-      // Нет вкладок — закрываем соединение если открыто
       if (ws && ws.readyState === WebSocket.OPEN) {
         console.log('[bg] Нет вкладок astramaps — закрываем WS');
         ws.close();
       }
       return;
     }
-    // Есть вкладки — переподключаемся если нужно
     if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
       connectWS();
     }
@@ -41,7 +39,6 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 function connectWS() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
 
-  // Подключаемся только если есть активные вкладки astramaps
   hasAstramapsTabs((hasTabs) => {
     if (!hasTabs) {
       console.log('[bg] Нет вкладок astramaps — пропускаем подключение');
@@ -53,6 +50,10 @@ function connectWS() {
 
 function _doConnect() {
   console.log('[bg] Подключаемся к', WS_URL);
+
+  // Сбрасываем флаг авторизации на всех портах при новом подключении
+  for (const port of ports) port._authenticated = false;
+
   ws = new WebSocket(WS_URL);
 
   ws.onopen = () => {
@@ -61,14 +62,40 @@ function _doConnect() {
   };
 
   ws.onmessage = (event) => {
-    try { broadcast(JSON.parse(event.data)); } catch {}
+    try {
+      const msg = JSON.parse(event.data);
+
+      // REGISTERED — помечаем все порты как авторизованные
+      if (msg.type === 'REGISTERED') {
+        for (const port of ports) port._authenticated = true;
+        console.log('[bg] Авторизация подтверждена');
+        broadcast(msg);
+        return;
+      }
+
+      // AUTH_ERROR — рассылаем только если нет ни одного авторизованного порта
+      // Это предотвращает показ ошибки авторизованным пользователям
+      if (msg.type === 'AUTH_ERROR') {
+        const hasAuth = [...ports].some(p => p._authenticated);
+        if (!hasAuth) {
+          console.warn('[bg] AUTH_ERROR — нет авторизованных портов, рассылаем');
+          broadcast(msg);
+        } else {
+          console.warn('[bg] AUTH_ERROR — есть авторизованные порты, игнорируем');
+        }
+        return;
+      }
+
+      broadcast(msg);
+    } catch {}
   };
 
   ws.onclose = () => {
     console.log('[bg] WS отключён');
+    // Сбрасываем флаг авторизации
+    for (const port of ports) port._authenticated = false;
     broadcast({ type: 'WS_STATUS', status: 'disconnected' });
     if (reconnectTimer) clearTimeout(reconnectTimer);
-    // Реконнект только если есть вкладки
     reconnectTimer = setTimeout(() => {
       hasAstramapsTabs((hasTabs) => {
         if (hasTabs) _doConnect();
@@ -90,15 +117,21 @@ function broadcast(msg) {
 // ── Порты от content.js ───────────────────────────────────────────────────────
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== 'ws-bridge') return;
+  port._authenticated = false; // изначально не авторизован
   ports.add(port);
   console.log('[bg] Вкладка подключилась, всего:', ports.size);
 
   port.postMessage({
-    type: 'WS_STATUS',
+    type:   'WS_STATUS',
     status: ws && ws.readyState === WebSocket.OPEN ? 'connected' : 'disconnected'
   });
 
   port.onMessage.addListener((msg) => {
+    // При отправке REGISTER сбрасываем флаг — ждём подтверждения от сервера
+    if (msg.type === 'REGISTER') {
+      port._authenticated = false;
+    }
+
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(msg));
     } else {
