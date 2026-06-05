@@ -1,31 +1,57 @@
 // background.js — фоновый service worker расширения.
 // Не имеет ограничений Mixed Content — подключается к ws:// с HTTPS страниц.
-//
 // MV3: Chrome убивает SW через ~30 сек. chrome.alarms не даёт ему умереть.
 
-// WS_URL — дублируется сюда же чтобы не зависеть от chrome.storage при старте.
-// Менять в ОДНОМ месте: config.js (content script) и здесь.
 const WS_URL = 'ws://186.246.2.6:5000';
 
 let ws = null;
 let reconnectTimer = null;
 const ports = new Set();
 
+// ── Проверка активных вкладок astramaps ───────────────────────────────────────
+function hasAstramapsTabs(callback) {
+  chrome.tabs.query({ url: 'https://center.astramaps.ru/*' }, (tabs) => {
+    callback(tabs.length > 0);
+  });
+}
+
 // ── Keep-alive (MV3) ──────────────────────────────────────────────────────────
 chrome.alarms.create('wsKeepAlive', { periodInMinutes: 0.33 }); // ~20 сек
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'wsKeepAlive') {
+  if (alarm.name !== 'wsKeepAlive') return;
+
+  hasAstramapsTabs((hasTabs) => {
+    if (!hasTabs) {
+      // Нет вкладок — закрываем соединение если открыто
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        console.log('[bg] Нет вкладок astramaps — закрываем WS');
+        ws.close();
+      }
+      return;
+    }
+    // Есть вкладки — переподключаемся если нужно
     if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
       connectWS();
     }
-  }
+  });
 });
 
 // ── WebSocket ─────────────────────────────────────────────────────────────────
 function connectWS() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
 
+  // Подключаемся только если есть активные вкладки astramaps
+  hasAstramapsTabs((hasTabs) => {
+    if (!hasTabs) {
+      console.log('[bg] Нет вкладок astramaps — пропускаем подключение');
+      return;
+    }
+    _doConnect();
+  });
+}
+
+function _doConnect() {
   console.log('[bg] Подключаемся к', WS_URL);
   ws = new WebSocket(WS_URL);
 
@@ -39,10 +65,15 @@ function connectWS() {
   };
 
   ws.onclose = () => {
-    console.log('[bg] WS отключён, реконнект через 2с...');
+    console.log('[bg] WS отключён');
     broadcast({ type: 'WS_STATUS', status: 'disconnected' });
     if (reconnectTimer) clearTimeout(reconnectTimer);
-    reconnectTimer = setTimeout(connectWS, 2000);
+    // Реконнект только если есть вкладки
+    reconnectTimer = setTimeout(() => {
+      hasAstramapsTabs((hasTabs) => {
+        if (hasTabs) _doConnect();
+      });
+    }, 2000);
   };
 
   ws.onerror = (err) => {
@@ -81,4 +112,24 @@ chrome.runtime.onConnect.addListener((port) => {
   });
 });
 
+// ── При открытии вкладки astramaps — подключаемся ────────────────────────────
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status === 'complete' &&
+      tab.url?.startsWith('https://center.astramaps.ru')) {
+    console.log('[bg] Открылась вкладка astramaps — подключаемся');
+    connectWS();
+  }
+});
+
+// ── При закрытии последней вкладки astramaps — отключаемся ───────────────────
+chrome.tabs.onRemoved.addListener(() => {
+  hasAstramapsTabs((hasTabs) => {
+    if (!hasTabs && ws && ws.readyState === WebSocket.OPEN) {
+      console.log('[bg] Все вкладки astramaps закрыты — отключаемся');
+      ws.close();
+    }
+  });
+});
+
+// При старте — проверяем есть ли уже открытые вкладки
 connectWS();

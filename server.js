@@ -14,8 +14,6 @@ const fs        = require('fs');
 const http      = require('http');
 const crypto    = require('crypto');
 
-
-
 // ─────────────────────────────────────────────────────────────────
 // CLI-режим — управление токенами без запуска сервера
 // ─────────────────────────────────────────────────────────────────
@@ -62,12 +60,11 @@ if (args[0] === '--issue' || args[0] === '--revoke' || args[0] === '--list') {
 // Генерация токена
 // ─────────────────────────────────────────────────────────────────
 function generateToken() {
-  return crypto.randomBytes(32).toString('hex'); // 64 символа hex
+  return crypto.randomBytes(32).toString('hex');
 }
 
 // ─────────────────────────────────────────────────────────────────
-// ПОДРАЗДЕЛЕНИЯ — дублируют config.js
-// Добавить подразделение: одна запись здесь и в config.js клиента
+// ПОДРАЗДЕЛЕНИЯ
 // ─────────────────────────────────────────────────────────────────
 const OFFICES = {
   'HQ': {
@@ -94,8 +91,6 @@ const OFFICES = {
     isHQ:  false,
     roles: ['разведка','рэб','инженеры','артиллерия','бпс','админ','гооп','босс'],
   },
-  // Шаблон:
-  // 'oXXX': { name: 'XXX подразделение', short: 'XXX', isHQ: false, roles: [...VALID_ROLES] },
 };
 
 const VALID_ROLES = ['разведка','рэб','инженеры','артиллерия','бпс','админ','гооп','босс'];
@@ -124,8 +119,16 @@ function getOnlineByOffice() {
 const EXTENSION_DIR = path.join(__dirname, 'extension');
 const HTTP_PORT     = 5001;
 
-const ALLOWED_FILES = ['manifest.json','content.js','background.js','inject.js','version.json','astra_extension.zip'];
-const MIME_TYPES    = { '.js':'application/javascript', '.json':'application/json', '.png':'image/png' };
+const ALLOWED_FILES = [
+  'manifest.json','content.js','background.js',
+  'inject.js','version.json','astra_extension.zip',
+];
+const MIME_TYPES = {
+  '.js':   'application/javascript',
+  '.json': 'application/json',
+  '.png':  'image/png',
+  '.zip':  'application/zip',
+};
 
 const httpServer = http.createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -136,11 +139,19 @@ const httpServer = http.createServer((req, res) => {
 
   if (!ALLOWED_FILES.includes(fileName)) { res.writeHead(404); res.end('Not found'); return; }
 
-  const filePath = fileName === 'astra_extension.zip' ? path.join(__dirname, fileName) : path.join(EXTENSION_DIR, fileName);
+  const filePath = fileName === 'astra_extension.zip'
+    ? path.join(__dirname, fileName)
+    : path.join(EXTENSION_DIR, fileName);
+
   if (!fs.existsSync(filePath)) { res.writeHead(404); res.end('File not found'); return; }
 
-  const mimeType = MIME_TYPES[path.extname(fileName)] || 'text/plain';
-  res.writeHead(200, { 'Content-Type': mimeType });
+  const mimeType = MIME_TYPES[path.extname(fileName)] || 'application/octet-stream';
+  res.writeHead(200, {
+    'Content-Type': mimeType,
+    'Content-Disposition': fileName === 'astra_extension.zip'
+      ? 'attachment; filename="astra_extension.zip"'
+      : 'inline',
+  });
   fs.createReadStream(filePath).pipe(res);
 });
 
@@ -155,7 +166,6 @@ const db = new Database(path.join(__dirname, 'data.db'));
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
-// Создаём таблицу токенов
 function ensureTokenTable(database) {
   database.exec(`
     CREATE TABLE IF NOT EXISTS tokens (
@@ -184,8 +194,8 @@ db.exec(`
     note         TEXT    DEFAULT '',
     UNIQUE (target_id, plan_date)
   );
-  CREATE INDEX IF NOT EXISTS idx_plans_date       ON plans(plan_date);
-  CREATE INDEX IF NOT EXISTS idx_plans_published  ON plans(plan_date, published);
+  CREATE INDEX IF NOT EXISTS idx_plans_date      ON plans(plan_date);
+  CREATE INDEX IF NOT EXISTS idx_plans_published ON plans(plan_date, published);
 `);
 
 db.exec(`
@@ -218,11 +228,9 @@ db.exec(`
 // Подготовленные запросы
 // ─────────────────────────────────────────────────────────────────
 const stmt = {
-  // Токены
-  getToken:     db.prepare(`SELECT * FROM tokens WHERE token = ? AND active = 1`),
-  touchToken:   db.prepare(`UPDATE tokens SET last_used = datetime('now') WHERE token = ?`),
+  getToken:   db.prepare(`SELECT * FROM tokens WHERE token = ? AND active = 1`),
+  touchToken: db.prepare(`UPDATE tokens SET last_used = datetime('now') WHERE token = ?`),
 
-  // Пользователи
   upsertUser: db.prepare(`
     INSERT INTO users (astra_id, role, display_name, token_hint, last_seen)
     VALUES (@astra_id, @role, @display_name, @token_hint, datetime('now'))
@@ -232,22 +240,24 @@ const stmt = {
       token_hint   = excluded.token_hint,
       last_seen    = datetime('now')
   `),
-  getRoleByAstraId: db.prepare(`SELECT role, display_name FROM users WHERE astra_id = ?`),
+  getRoleByAstraId: db.prepare(`SELECT role, display_name, office_id FROM users WHERE astra_id = ?`),
 
-  // Задачи
   insertTask: db.prepare(`
-  INSERT INTO tasks (from_role, to_role, from_office, to_office, target_id, target_title, text, status)
-  VALUES (@from_role, @to_role, @from_office, @to_office, @target_id, @target_title, @text, 'новая')
-`),
+    INSERT INTO tasks (from_role, to_role, from_office, to_office, target_id, target_title, text, status)
+    VALUES (@from_role, @to_role, @from_office, @to_office, @target_id, @target_title, @text, 'новая')
+  `),
   updateTaskStatus: db.prepare(`
     UPDATE tasks SET status = @status, updated_at = datetime('now'), updated_by = @updated_by
     WHERE id = @id
   `),
   getTask:         db.prepare(`SELECT * FROM tasks WHERE id = ?`),
-  getPendingTasks: db.prepare(`SELECT * FROM tasks WHERE to_role = ? AND status = 'новая' ORDER BY created_at ASC`),
-  getRecentTasks:  db.prepare(`SELECT * FROM tasks WHERE from_role = ? OR to_role = ? ORDER BY created_at DESC LIMIT 100`),
+  getPendingTasks: db.prepare(`
+    SELECT * FROM tasks WHERE to_role = ? AND status = 'новая' ORDER BY created_at DESC
+  `),
+  getRecentTasks: db.prepare(`
+    SELECT * FROM tasks WHERE from_role = ? OR to_role = ? ORDER BY created_at DESC LIMIT 100
+  `),
 
-  // Планы
   insertPlan: db.prepare(`
     INSERT OR IGNORE INTO plans (target_id, target_data, plan_date, created_by, note)
     VALUES (@target_id, @target_data, @plan_date, @created_by, @note)
@@ -264,8 +274,6 @@ const stmt = {
 // WEBSOCKET СЕРВЕР
 // ─────────────────────────────────────────────────────────────────
 const wss = new WebSocket.Server({ port: 5000 });
-
-// Подключённые клиенты: astraId → { ws, role, officeId, displayName }
 const clients = new Map();
 
 function log(msg) {
@@ -276,23 +284,23 @@ function normalizeTask(task) {
   return { ...task, from: task.from_role || task.from || '', to: task.to_role || task.to || '' };
 }
 
-function sendTo(role, data) {
+// Отправить всем клиентам с нужной ролью И подразделением
+function sendToOfficeRole(role, officeId, data) {
   let sent = false;
   for (const [, client] of clients) {
-    if (client.role === role && client.ws.readyState === WebSocket.OPEN) {
+    if (client.role === role && client.officeId === officeId && client.ws.readyState === WebSocket.OPEN) {
       try { client.ws.send(JSON.stringify(data)); sent = true; } catch {}
     }
   }
-  return sent;
-}
-
-function broadcast(data, exceptRole = null) {
-  for (const [, client] of clients) {
-    if (client.role === exceptRole) continue;
-    if (client.ws.readyState === WebSocket.OPEN) {
-      try { client.ws.send(JSON.stringify(data)); } catch {}
+  // Если нет клиентов с нужным офисом — отправляем всем с нужной ролью (обратная совместимость)
+  if (!sent) {
+    for (const [, client] of clients) {
+      if (client.role === role && client.ws.readyState === WebSocket.OPEN) {
+        try { client.ws.send(JSON.stringify(data)); sent = true; } catch {}
+      }
     }
   }
+  return sent;
 }
 
 function broadcastAll(data) {
@@ -315,19 +323,19 @@ function getOnlineRoles() {
 // Обработка подключений
 // ─────────────────────────────────────────────────────────────────
 wss.on('connection', (ws, req) => {
-  let myRole     = null;
-  let myAstraId  = null;
-  let myName     = null;
-  let myOfficeId = 'HQ';
-  let authenticated = false; // флаг — прошёл ли клиент проверку токена
+  let myRole      = null;
+  let myAstraId   = null;
+  let myName      = null;
+  let myOfficeId  = 'HQ';
+  let authenticated = false;
 
-  // Таймер — если клиент не прошёл REGISTER за 10 секунд, отключаем
+  // Таймаут авторизации — 30 секунд (даём время на загрузку страницы)
   const authTimeout = setTimeout(() => {
     if (!authenticated) {
       log(`⏱️  Таймаут авторизации — клиент не прислал REGISTER`);
       ws.close(4001, 'Auth timeout');
     }
-  }, 10_000);
+  }, 30_000);
 
   ws.on('message', async (raw) => {
     let msg;
@@ -336,13 +344,11 @@ wss.on('connection', (ws, req) => {
       return;
     }
 
-    // ── PING — без авторизации ────────────────────────────────────────────
     if (msg.type === 'PING') {
       ws.send(JSON.stringify({ type: 'PONG' }));
       return;
     }
 
-    // ── REGISTER — единственное место где проверяем токен ────────────────
     if (msg.type === 'REGISTER') {
       clearTimeout(authTimeout);
 
@@ -351,7 +357,6 @@ wss.on('connection', (ws, req) => {
       const username    = (msg.username    || '').trim();
       const displayName = (msg.displayName || username || 'Неизвестно').trim();
 
-      // ── Проверка токена ───────────────────────────────────────────────
       if (!token) {
         log(`🚫 REGISTER без токена: ${username}`);
         ws.send(JSON.stringify({ type: 'AUTH_ERROR', text: 'Токен обязателен' }));
@@ -367,10 +372,9 @@ wss.on('connection', (ws, req) => {
         return;
       }
 
-      // Обновляем last_used
       stmt.touchToken.run(token);
 
-      // Роль: из токена (приоритет) → из БД по userId → из сообщения → NEED_ROLE
+      // Роль: из токена → из БД → из сообщения
       let resolvedRole = tokenRow.role || null;
       if (!resolvedRole && userId) {
         const cached = stmt.getRoleByAstraId.get(userId);
@@ -379,26 +383,23 @@ wss.on('connection', (ws, req) => {
       if (!resolvedRole) resolvedRole = (msg.role || '').toLowerCase().trim() || null;
 
       if (!resolvedRole || !VALID_ROLES.includes(resolvedRole)) {
-        ws.send(JSON.stringify({
-          type:       'NEED_ROLE',
-          text:       `Выберите расчёт`,
-          validRoles: VALID_ROLES,
-        }));
-        // Не закрываем — ждём повторного REGISTER с выбранной ролью
+        ws.send(JSON.stringify({ type: 'NEED_ROLE', text: 'Выберите расчёт', validRoles: VALID_ROLES }));
         return;
       }
 
-      // подразделение из токена → из сообщения → HQ
-      myOfficeId = (tokenRow.office_id && OFFICES[tokenRow.office_id])
-        ? tokenRow.office_id
-        : (msg.officeId && OFFICES[msg.officeId] ? msg.officeId : 'HQ');
+      // Офис: из БД пользователя (приоритет) → из токена → из сообщения → HQ
+      const dbUser = stmt.getRoleByAstraId.get(userId || username);
+      myOfficeId = (dbUser?.office_id && OFFICES[dbUser.office_id])
+        ? dbUser.office_id
+        : (tokenRow.office_id && OFFICES[tokenRow.office_id])
+          ? tokenRow.office_id
+          : (msg.officeId && OFFICES[msg.officeId] ? msg.officeId : 'HQ');
 
-      // Сохраняем в БД
       stmt.upsertUser.run({
         astra_id:     userId || username,
         role:         resolvedRole,
         display_name: displayName,
-        token_hint:   token.slice(0, 8), // только первые 8 символов для отладки
+        token_hint:   token.slice(0, 8),
       });
 
       myRole    = resolvedRole;
@@ -424,11 +425,21 @@ wss.on('connection', (ws, req) => {
       const history = stmt.getRecentTasks.all(myRole, myRole);
       ws.send(JSON.stringify({ type: 'TASKS_HISTORY', tasks: history.map(normalizeTask) }));
 
-      broadcast({ type: 'USER_ONLINE', role: myRole, displayName: myName, officeId: myOfficeId, online: getOnlineByOffice() }, myRole);
+      // Уведомляем всех об онлайне
+      for (const [, client] of clients) {
+        if (client.astraId === myAstraId) continue;
+        if (client.ws.readyState === WebSocket.OPEN) {
+          try {
+            client.ws.send(JSON.stringify({
+              type: 'USER_ONLINE', role: myRole, displayName: myName,
+              officeId: myOfficeId, online: getOnlineByOffice(),
+            }));
+          } catch {}
+        }
+      }
       return;
     }
 
-    // ── Все остальные сообщения — только после авторизации ───────────────
     if (!authenticated || !myRole) {
       ws.send(JSON.stringify({ type: 'AUTH_ERROR', text: 'Сначала REGISTER с токеном' }));
       return;
@@ -452,33 +463,39 @@ wss.on('connection', (ws, req) => {
           from_role:    myRole,
           to_role:      toRole,
           from_office:  myOfficeId || 'HQ',
-          to_office:    toOfficeId || myOfficeId || 'HQ',
-          target_id:    msg.targetId   || null,
+          to_office:    toOfficeId || 'HQ',
+          target_id:    msg.targetId    || null,
           target_title: msg.targetTitle || '',
           text:         msg.text.trim(),
         });
         const task  = stmt.getTask.get(info.lastInsertRowid);
         const nTask = normalizeTask(task);
-        log(`📋 Задача #${task.id}: ${myRole} → ${toRole}`);
-        ws.send(JSON.stringify({ type: 'TASK_SENT', task: nTask }));
-        const delivered = sendTo(toRole, { type: 'NEW_TASK', task: nTask });
+        log(`📋 Задача #${task.id}: ${myRole}[${myOfficeId}] → ${toRole}[${toOfficeId}]`);
 
-        log(`   Доставлено: ${delivered ? 'да' : 'офлайн'}`);
+        // Отправителю — подтверждение
+        ws.send(JSON.stringify({ type: 'TASK_SENT', task: nTask }));
+
+        // Получателю — уведомление о новой задаче (только нужному подразделению)
+        const delivered = sendToOfficeRole(toRole, toOfficeId, { type: 'NEW_TASK', task: nTask });
+        log(`   Доставлено получателю: ${delivered ? 'да' : 'офлайн'}`);
+
+        // Всем остальным — обновление без уведомления
         for (const [, client] of clients) {
-  // Получатель уже получил NEW_TASK через sendTo
-  if (client.role === toRole && client.officeId === toOfficeId) continue;
-  // Отправитель получил TASK_SENT
-  if (client.astraId === myAstraId) continue;
-  if (client.ws.readyState === WebSocket.OPEN) {
-    try { client.ws.send(JSON.stringify({ type: 'TASK_UPDATE', task: nTask })); } catch {}
-  }
-}
+          if (client.astraId === myAstraId) continue; // отправитель уже получил TASK_SENT
+          if (client.role === toRole && client.officeId === toOfficeId) continue; // получатель уже получил NEW_TASK
+          if (client.ws.readyState === WebSocket.OPEN) {
+            try { client.ws.send(JSON.stringify({ type: 'TASK_UPDATE', task: nTask })); } catch {}
+          }
+        }
         break;
       }
 
       case 'UPDATE_TASK': {
-        const VALID_STATUSES = ['новая','принята','в работе','выполнена','отклонена',
-          'поражена','не поражена','доразведка','подтверждено','подавлено','перенесена'];
+        const VALID_STATUSES = [
+          'новая','принята','в работе','выполнена','отклонена',
+          'поражена','не поражена','доразведка','подтверждено',
+          'подавлено','перенесена','уничтожена',
+        ];
         if (!VALID_STATUSES.includes(msg.status)) {
           ws.send(JSON.stringify({ type: 'ERROR', text: `Неверный статус: ${msg.status}` })); return;
         }
@@ -489,14 +506,18 @@ wss.on('connection', (ws, req) => {
         }
         const task = stmt.getTask.get(msg.taskId);
         if (!task) { ws.send(JSON.stringify({ type: 'ERROR', text: `Задача не найдена` })); return; }
-        log(`🔄 Задача #${task.id} → ${task.status} (${myRole})`);
+        log(`🔄 Задача #${task.id} → ${task.status} (${myRole}[${myOfficeId}])`);
         broadcastAll({ type: 'TASK_UPDATED', task: normalizeTask(task) });
         break;
       }
 
       case 'UPDATE':
-        log(`🗺️  Обновление карты от: ${myRole}`);
-        broadcast({ type: 'UPDATE', from: myRole, displayName: myName }, myRole);
+        for (const [, client] of clients) {
+          if (client.astraId === myAstraId) continue;
+          if (client.ws.readyState === WebSocket.OPEN) {
+            try { client.ws.send(JSON.stringify({ type: 'UPDATE', from: myRole, displayName: myName })); } catch {}
+          }
+        }
         break;
 
       case 'CREATE_PLAN': {
@@ -565,7 +586,15 @@ wss.on('connection', (ws, req) => {
     if (myAstraId) {
       clients.delete(myAstraId);
       log(`🔴 ${myName || myRole} [${myRole}] отключился`);
-      broadcast({ type: 'USER_OFFLINE', role: myRole, online: getOnlineRoles() });
+      for (const [, client] of clients) {
+        if (client.ws.readyState === WebSocket.OPEN) {
+          try {
+            client.ws.send(JSON.stringify({
+              type: 'USER_OFFLINE', role: myRole, online: getOnlineRoles(),
+            }));
+          } catch {}
+        }
+      }
     }
   });
 
