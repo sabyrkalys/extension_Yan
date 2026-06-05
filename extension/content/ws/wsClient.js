@@ -84,10 +84,12 @@ function connectWS() {
       // Стало:
       if (msg.type === 'AUTH_ERROR') {
         console.error('[ws] ❌ Ошибка авторизации:', msg.text);
-        // Показываем тост только если пользователь ещё не авторизован
-        if (!store.get('myUsername')) {
-          showToast('❌ ' + msg.text + ' — обратитесь к администратору', 'error');
-        }
+        // Задержка 4с — даём время на определение пользователя
+        setTimeout(() => {
+          if (!store.get('myUsername')) {
+            showToast('❌ ' + msg.text + ' — обратитесь к администратору', 'error');
+          }
+        }, 4000);
         return;
       }
 
