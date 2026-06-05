@@ -136,7 +136,7 @@ const httpServer = http.createServer((req, res) => {
 
   if (!ALLOWED_FILES.includes(fileName)) { res.writeHead(404); res.end('Not found'); return; }
 
-  const filePath = path.join(EXTENSION_DIR, fileName);
+  const filePath = fileName === 'astra_extension.zip' ? path.join(__dirname, fileName) : path.join(EXTENSION_DIR, fileName);
   if (!fs.existsSync(filePath)) { res.writeHead(404); res.end('File not found'); return; }
 
   const mimeType = MIME_TYPES[path.extname(fileName)] || 'text/plain';
