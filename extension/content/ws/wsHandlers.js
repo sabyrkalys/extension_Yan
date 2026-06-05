@@ -51,18 +51,32 @@ function handleWsMessage(msg) {
 
     // ── Новая задача (входящая) ───────────────────────────────────────────────
     case 'NEW_TASK': {
-      const task = msg.task;
-      addTaskToPanel(task);
-      const seenTaskIds = store.get('seenTaskIds');
-      if (!seenTaskIds.has(task.id)) {
-        seenTaskIds.add(task.id);
-        unreadTaskCount++;
-        updateTaskBadge();
-        renderTaskNotification(task);
-        playNotificationSound();
-      }
-      break;
-    }
+  const task = msg.task;
+  addTaskToPanel(task);
+  _updateTasksByTarget(task);
+  refreshTaskCellByTargetId(task);
+
+  const seenTaskIds  = store.get('seenTaskIds');
+  const myOfficeId   = store.get('myOfficeId') || 'HQ';
+  const toRole       = task.to_role || task.to || '';
+  const toOffice     = task.to_office || '';
+
+  // Уведомление только получателю задачи
+  const isForMe = toRole === myRole
+    && (toOffice === '' || toOffice === myOfficeId);
+
+  if (isForMe && !seenTaskIds.has(task.id)) {
+    seenTaskIds.add(task.id);
+    unreadTaskCount++;
+    updateTaskBadge();
+    renderTaskNotification(task);
+    playNotificationSound();
+  } else if (!isForMe && !seenTaskIds.has(task.id)) {
+    // Отправитель и наблюдатели — добавляем в seen без уведомления
+    seenTaskIds.add(task.id);
+  }
+  break;
+}
 
     // ── Задача отправлена (подтверждение) ─────────────────────────────────────
     case 'TASK_SENT':

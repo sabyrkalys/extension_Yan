@@ -54,7 +54,6 @@ function createPopup() {
         <div style="display: flex; align-items: center; gap: 8px;">
           <h3 style="margin: 0; font-size: 16px;">📋 Таблица учёта целей</h3>
           <button id="addTargetBtn" style="background:#28a745; color:white; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; font-size:14px;">+ Добавить цель</button>
-          <!-- Кнопка задач с бейджем -->
           <div style="position:relative; display:inline-block;">
             <button id="showTasksBtn" style="background:#fd7e14; color:white; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; font-size:14px;">📋 Задачи</button>
             <span id="task-badge" style="display:none; position:absolute; top:-6px; right:-6px; background:#dc3545; color:white; border-radius:50%; width:18px; height:18px; font-size:11px; align-items:center; justify-content:center; font-weight:600;"></span>
@@ -62,18 +61,15 @@ function createPopup() {
           <button id="showPlanningBtn" style="background:#6f42c1; color:white; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; font-size:14px;">📅 Спланировано</button>
         </div>
         <div style="display:flex; align-items:center; gap:8px;">
-          <!-- Плашка с именем и расчётом (заполняется автоматически после REGISTER) -->
           <span id="myRoleTag" style="font-size:12px;background:#2c5282;padding:4px 10px;border-radius:6px;white-space:nowrap;">
             🔄 Определяю расчёт...
           </span>
           <button id="closePopupBtn" style="background: none; border: none; color: white; font-size: 28px; padding: 2px 12px; cursor: pointer;">&times;</button>
         </div>
       </div>
-      <!-- Индикатор онлайн-расчётов -->
       <div id="online-indicator" style="padding: 4px 6px; font-size: 11px; opacity: 0.9; min-height: 18px; display:flex; flex-wrap:wrap; align-items:center; gap:4px;"></div>
     </div>
 
-    <!-- Панель дат — между расчётами и таблицей -->
     <div id="dates-panel" style="
       background: #162d4a;
       padding: 6px 14px;
@@ -122,7 +118,6 @@ function createPopup() {
       </table>
     </div>
 
-    <!-- Панель задач (скрыта по умолчанию) -->
     <div id="tasksPanel" style="display:none; flex:1; overflow-y:auto; padding:12px; background:#f5f7fa; color:black;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
         <strong style="font-size:14px;">Задачи между расчётами</strong>
@@ -143,17 +138,15 @@ function createPopup() {
       </table>
     </div>
 
-    <!-- Панель Спланировано — непоражённые цели по всем датам -->
     <div id="planningPanel" style="
       display:none; flex-direction:column; flex:1;
       overflow:hidden; background:#f5f7fa; color:black;
     "></div>
 
-    <!-- Модал: создать новую задачу -->
     <div id="newTaskModal" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:none;justify-content:center;align-items:center;z-index:10001;">
       <div style="background:white;width:90%;max-width:420px;border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:10px;">
         <h3 style="margin:0;font-size:16px;">Новая задача</h3>
-        <label style="font-size:12px;color:#555;">подразделение получателя:</label>
+        <label style="font-size:12px;color:#555;">Подразделение получателя:</label>
         <select id="taskOfficeSelect" style="padding:6px;border-radius:5px;border:1px solid #ccc;">
           <option value="">— выберите подразделение —</option>
         </select>
@@ -201,7 +194,6 @@ function createPopup() {
         </select>
         <input id="coordX" type="number" placeholder="Координата X" />
         <input id="coordY" type="number" placeholder="Координата Y" />
-        <!-- ✅ FIX: опечатка исправлена -->
         <input id="impactTime" type="time" placeholder="Время обнаружения" />
         <input id="impactDate" type="date" placeholder="Дата обнаружения" />
         <select id="impactResult">
@@ -224,23 +216,12 @@ function createPopup() {
   popupElement.style.display = 'none';
   document.body.appendChild(popupElement);
 
-  // Применяем закешированные данные индикатора (могли прийти до создания попапа)
   if (typeof _renderOnlineIndicator === 'function') _renderOnlineIndicator();
   if (typeof updateRoleTag === 'function') updateRoleTag();
-
-  // Заполняем список расчётов из config.js — добавить роль = только в ROLE_TO_USERS
-  const taskToSelect = popupElement.querySelector('#taskTo');
-  Object.keys(ROLE_TO_USERS).forEach(role => {
-    const opt = document.createElement('option');
-    opt.value = role;
-    opt.textContent = role.charAt(0).toUpperCase() + role.slice(1);
-    taskToSelect.appendChild(opt);
-  });
 
   const modal = popupElement.querySelector('#addTargetModal');
 
   popupElement.querySelector('#addTargetBtn').addEventListener("click", function () {
-    // Подставляем московское время (UTC+3) в поля при каждом открытии
     popupElement.querySelector('#impactDate').value = getMoscowDateStr();
     popupElement.querySelector('#impactTime').value = getMoscowTimeStr();
     modal.style.display = 'flex';
@@ -253,25 +234,33 @@ function createPopup() {
   popupElement.querySelector('#submitAddTarget').onclick = async () => {
     try {
       const data = {
-        targetNumber: '1',
+        targetNumber:   '1',
         characteristic: popupElement.querySelector('#targetType').value,
-        coordX: popupElement.querySelector('#coordX').value,
-        coordY: popupElement.querySelector('#coordY').value,
-        impactTime: popupElement.querySelector('#impactTime').value,
-        result: popupElement.querySelector('#impactResult').value,
-        defeatDate: popupElement.querySelector('#impactDate').value,
+        coordX:         popupElement.querySelector('#coordX').value,
+        coordY:         popupElement.querySelector('#coordY').value,
+        impactTime:     popupElement.querySelector('#impactTime').value,
+        result:         popupElement.querySelector('#impactResult').value,
+        defeatDate:     popupElement.querySelector('#impactDate').value,
       };
 
       const existing = getTableData();
       existing.push(data);
       populateTable(existing);
 
-      await apiSendTarget(data);
+      // Определяем папку для активной даты (сегодня или завтра)
+      const _today    = getMoscowDateStr();
+      const _tomorrow = new Date(Date.now() + 3*3600000 + 86400000).toISOString().slice(0,10);
+      const _tree     = JSON.parse(localStorage.getItem(CACHE_KEY_DATES) || 'null');
+      const _dates    = _tree?.dates || [];
+      const _targetDate    = activeFolderDate || _today;
+      const _targetEntry   = _dates.find(d => d.date === _targetDate);
+      const _targetFolderId = _targetEntry?.folderId || latestFolderId;
 
-      // Перезагружаем данные через основной путь (с кэшем и папками)
-      await loadByDateFromPanel(getMoscowDateStr());
+      await apiSendTarget(data, _targetFolderId);
 
-      // ✅ FIX: сброс полей после закрытия модала
+      // Перезагружаем данные
+      await loadByDateFromPanel(_targetDate);
+
       modal.style.display = 'none';
       popupElement.querySelector('#targetTitle').value = '';
       popupElement.querySelector('#targetType').selectedIndex = 0;
@@ -301,14 +290,12 @@ function createPopup() {
     await publishPlan(planDate);
   }, { label: '⏳ Публикуем...' }));
 
-  // ── Кнопка Планирование ─────────────────────────────────────────────────
   const tableWrapper  = popupElement.querySelector('.table-wrapper');
   const tasksPanel    = popupElement.querySelector('#tasksPanel');
   const planningPanel = popupElement.querySelector('#planningPanel');
 
   popupElement.querySelector('#showPlanningBtn').addEventListener('click', () => {
     const isOpen = planningPanel && planningPanel.style.display !== 'none';
-    // Скрываем все панели
     if (tableWrapper)  tableWrapper.style.display  = 'none';
     if (tasksPanel)    tasksPanel.style.display     = 'none';
     if (planningPanel) planningPanel.style.display  = 'none';
@@ -317,7 +304,7 @@ function createPopup() {
 
     if (!isOpen) {
       if (planningPanel) {
-        planningPanel.style.display     = 'flex';
+        planningPanel.style.display       = 'flex';
         planningPanel.style.flexDirection = 'column';
       }
       popupElement.querySelector('#showPlanningBtn').textContent = '🗺️ Цели';
@@ -327,21 +314,17 @@ function createPopup() {
     }
   });
 
-  // ── Переключение между таблицей целей и панелью задач ───────────────────
-  
-
   popupElement.querySelector('#showTasksBtn').addEventListener('click', () => {
     const isTasksVisible = tasksPanel.style.display !== 'none';
     if (isTasksVisible) {
-      tasksPanel.style.display = 'none';
+      tasksPanel.style.display   = 'none';
       tableWrapper.style.display = '';
       popupElement.querySelector('#showTasksBtn').textContent = '📋 Задачи';
     } else {
-      tasksPanel.style.display = 'flex';
+      tasksPanel.style.display       = 'flex';
       tasksPanel.style.flexDirection = 'column';
-      tableWrapper.style.display = 'none';
+      tableWrapper.style.display     = 'none';
       popupElement.querySelector('#showTasksBtn').textContent = '🗺️ Цели';
-      // Сбрасываем счётчик когда открыли панель задач
       unreadTaskCount = 0;
       updateTaskBadge();
     }
@@ -352,7 +335,8 @@ function createPopup() {
 
   popupElement.querySelector('#newTaskBtn').addEventListener('click', () => {
     if (!myRole) { showToast('Сначала выберите свой расчёт', 'error'); return; }
-    // Заполняем список целей из текущей таблицы
+
+    // Заполняем список целей
     const targetSelect = newTaskModal.querySelector('#taskTargetSelect');
     targetSelect.innerHTML = '<option value="">— без привязки к цели —</option>';
     const rows = document.querySelectorAll('#statusTable tbody tr');
@@ -366,24 +350,23 @@ function createPopup() {
     });
 
     // Заполняем подразделения
-const officeSelect = newTaskModal.querySelector('#taskOfficeSelect');
-if (officeSelect) {
-  officeSelect.innerHTML = '';
-  const myOfficeId = store.get('myOfficeId') || 'HQ';
-  Object.entries(OFFICES).forEach(([id, office]) => {
-    if (!canAssignTask(myOfficeId, id)) return;
-    const opt = document.createElement('option');
-    opt.value = id;
-    opt.textContent = office.name + (id === myOfficeId ? ' (своё)' : '');
-    officeSelect.appendChild(opt);
-  });
-  // При смене подразделения — обновляем список расчётов
-  officeSelect.onchange = () => _fillRolesForOffice(officeSelect.value);
-  // Заполняем расчёты для первого подразделения в списке
-  if (officeSelect.options.length > 0) {
-    _fillRolesForOffice(officeSelect.value);
-  }
-}
+    const officeSelect = newTaskModal.querySelector('#taskOfficeSelect');
+    if (officeSelect) {
+      officeSelect.innerHTML = '';
+      const myOfficeId = store.get('myOfficeId') || 'HQ';
+      Object.entries(OFFICES).forEach(([id, office]) => {
+        if (!canAssignTask(myOfficeId, id)) return;
+        const opt = document.createElement('option');
+        opt.value = id;
+        opt.textContent = office.name + (id === myOfficeId ? ' (своё)' : '');
+        officeSelect.appendChild(opt);
+      });
+      officeSelect.onchange = () => _fillRolesForOffice(officeSelect.value);
+      if (officeSelect.options.length > 0) {
+        _fillRolesForOffice(officeSelect.value);
+      }
+    }
+
     newTaskModal.style.display = 'flex';
   });
 
@@ -397,15 +380,14 @@ if (officeSelect) {
     const targetSel   = newTaskModal.querySelector('#taskTargetSelect');
     const targetId    = targetSel.value;
     const targetTitle = targetId ? targetSel.options[targetSel.selectedIndex].text : '';
+    const toOfficeId  = newTaskModal.querySelector('#taskOfficeSelect')?.value || store.get('myOfficeId') || 'HQ';
+    const myOfficeId  = store.get('myOfficeId') || 'HQ';
 
-    const toOfficeId = newTaskModal.querySelector('#taskOfficeSelect')?.value || store.get('myOfficeId') || 'HQ';
-    const myOfficeId = store.get('myOfficeId') || 'HQ';
-
-    if (!to)   { showToast('Укажите адресата', 'error'); return; }
-    if (!text) { showToast('Введите текст задачи', 'error'); return; }
+    if (!to)     { showToast('Укажите адресата', 'error'); return; }
+    if (!text)   { showToast('Введите текст задачи', 'error'); return; }
     if (!myRole) { showToast('Сначала выберите свой расчёт', 'error'); return; }
     if (!canAssignTask(myOfficeId, toOfficeId)) {
-      showToast('Нет прав назначать задачи этому подразделениеу', 'error'); return;
+      showToast('Нет прав назначать задачи этому подразделению', 'error'); return;
     }
 
     wsSend({ type: 'NEW_TASK', to, text, targetId, targetTitle, toOfficeId, fromOfficeId: myOfficeId });
@@ -422,20 +404,16 @@ if (officeSelect) {
     showToast('Экспорт в Excel – функция в разработке', 'info');
   });
 
-  // Кнопка обновления дат — защита от двойного клика
   const refreshBtn = popupElement.querySelector('#refreshDatesBtn');
   refreshBtn.addEventListener('click', withLock(refreshBtn, async () => {
     cacheClearAll();
     await renderDatePanel(true);
   }, { label: '⏳' }));
 
-  // Кнопка «Загрузить сегодня» — защита от двойного клика
   const todayBtn = popupElement.querySelector('#loadTodayMap');
   todayBtn.addEventListener('click', withLock(todayBtn, async () => {
     await loadByDateFromPanel(getMoscowDateStr());
   }, { label: '⏳' }));
-
-
 
   return popupElement;
 }
@@ -485,18 +463,22 @@ function findAndAddButton() {
 function updateAddTargetBtn() {
   const btn = document.querySelector('#addTargetBtn');
   if (!btn) return;
-  const isLatest = activeFolderId && latestFolderId && activeFolderId === latestFolderId;
-  const noDate   = !activeFolderId;
-  if (isLatest || noDate) {
+
+  const today    = getMoscowDateStr();
+  const tomorrow = new Date(Date.now() + 3*3600000 + 86400000).toISOString().slice(0,10);
+  const noDate   = !activeFolderDate;
+  const isToday  = activeFolderDate === today;
+  const isTomorrow = activeFolderDate === tomorrow;
+
+  if (noDate || isToday || isTomorrow) {
     btn.disabled = false;
     btn.style.opacity = '1';
     btn.style.cursor  = 'pointer';
-    btn.title = '';
+    btn.title = isTomorrow ? '📅 Добавление в папку завтрашнего дня' : '';
   } else {
     btn.disabled = true;
     btn.style.opacity = '0.4';
     btn.style.cursor  = 'not-allowed';
-    btn.title = `Только просмотр. Добавление в крайнюю папку (${latestFolderDate})`;
+    btn.title = `Только просмотр. Добавление доступно для сегодня (${today}) и завтра (${tomorrow})`;
   }
 }
-
