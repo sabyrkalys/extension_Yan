@@ -462,13 +462,17 @@ wss.on('connection', (ws, req) => {
         log(`📋 Задача #${task.id}: ${myRole} → ${toRole}`);
         ws.send(JSON.stringify({ type: 'TASK_SENT', task: nTask }));
         const delivered = sendTo(toRole, { type: 'NEW_TASK', task: nTask });
+
         log(`   Доставлено: ${delivered ? 'да' : 'офлайн'}`);
         for (const [, client] of clients) {
-          if (client.role === myRole || client.role === toRole) continue;
-          if (client.ws.readyState === WebSocket.OPEN) {
-            try { client.ws.send(JSON.stringify({ type: 'TASK_UPDATE', task: nTask })); } catch {}
-          }
-        }
+  // Получатель уже получил NEW_TASK через sendTo
+  if (client.role === toRole && client.officeId === toOfficeId) continue;
+  // Отправитель получил TASK_SENT
+  if (client.astraId === myAstraId) continue;
+  if (client.ws.readyState === WebSocket.OPEN) {
+    try { client.ws.send(JSON.stringify({ type: 'TASK_UPDATE', task: nTask })); } catch {}
+  }
+}
         break;
       }
 
