@@ -45,3 +45,10 @@ jobs:
 
             echo "✅ Деплой завершён"
             pm2 status astramap
+            - name: Repack extension zip
+              run: |
+                cd /opt/astramap
+                rm -f astra_extension.zip
+                zip -r astra_extension.zip extension/ \
+                  --exclude "extension/node_modules/*" \
+                  --exclude "extension/.gitkeep"
