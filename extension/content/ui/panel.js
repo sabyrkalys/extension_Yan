@@ -364,6 +364,26 @@ function createPopup() {
       opt.textContent = `#${id} ${title}`;
       targetSelect.appendChild(opt);
     });
+
+    // Заполняем подразделения
+const officeSelect = newTaskModal.querySelector('#taskOfficeSelect');
+if (officeSelect) {
+  officeSelect.innerHTML = '';
+  const myOfficeId = store.get('myOfficeId') || 'HQ';
+  Object.entries(OFFICES).forEach(([id, office]) => {
+    if (!canAssignTask(myOfficeId, id)) return;
+    const opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = office.name + (id === myOfficeId ? ' (своё)' : '');
+    officeSelect.appendChild(opt);
+  });
+  // При смене подразделения — обновляем список расчётов
+  officeSelect.onchange = () => _fillRolesForOffice(officeSelect.value);
+  // Заполняем расчёты для первого подразделения в списке
+  if (officeSelect.options.length > 0) {
+    _fillRolesForOffice(officeSelect.value);
+  }
+}
     newTaskModal.style.display = 'flex';
   });
 

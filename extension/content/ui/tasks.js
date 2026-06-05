@@ -262,7 +262,22 @@ function addTaskToPanel(task) {
   if (!task.from && task.from_role) task.from = task.from_role;
   if (!task.to   && task.to_role)   task.to   = task.to_role;
   const row = renderTaskRow(task);
-  tbody.insertBefore(row, tbody.firstChild);
+
+  // Вставляем в правильную позицию по дате (свежие сверху)
+  const rows = tbody.querySelectorAll('tr');
+  const taskTime = new Date(task.created_at || 0).getTime();
+  let inserted = false;
+  for (const existingRow of rows) {
+    const rowTaskId = existingRow.getAttribute('data-task-id');
+    const rowTask   = _getTaskById(rowTaskId);
+    const rowTime   = new Date(rowTask?.created_at || 0).getTime();
+    if (taskTime >= rowTime) {
+      tbody.insertBefore(row, existingRow);
+      inserted = true;
+      break;
+    }
+  }
+  if (!inserted) tbody.appendChild(row);
 
   const tasksByTarget = store.get('tasksByTarget');
   const tid = task.target_id || task.targetId;
@@ -278,8 +293,18 @@ function updateTaskInPanel(task) {
   if (existing) updateTaskRowEl(existing, task);
   else addTaskToPanel(task);
 }
+// Кэш задач по id для быстрой сортировки
+const _tasksCache = {};
 
+function _getTaskById(taskId) {
+  return _tasksCache[taskId] || null;
+}
+
+function _cacheTask(task) {
+  if (task?.id) _tasksCache[task.id] = task;
+}
 function renderTaskRow(task) {
+  _cacheTask(task); // ← добавить
   const tr = document.createElement('tr');
   tr.setAttribute('data-task-id', task.id);
   updateTaskRowEl(tr, task);
@@ -287,6 +312,7 @@ function renderTaskRow(task) {
 }
 
 function updateTaskRowEl(tr, task) {
+  _cacheTask(task); 
   const color = STATUS_COLORS[task.status] || '#888';
 
   // Подразделение отправителя и получателя
@@ -300,8 +326,19 @@ function updateTaskRowEl(tr, task) {
 
   // isMyTask — проверяем и роль и подразделение
   const myOfficeId = store.get('myOfficeId') || 'HQ';
-  const isMyTask   = (task.to_role === myRole || task.to === myRole)
-                  && (!task.to_office || task.to_office === myOfficeId);
+  const toRole_check   = task.to_role || task.to || '';
+const toOffice_check = task.to_office || '';
+
+const isMyTask = toRole_check === myRole && (
+  toOffice_check === '' ? true :        // старые задачи без офиса — по роли
+  toOffice_check === myOfficeId         // новые задачи — роль + офис
+);
+
+// Дополнительная защита — отправитель не должен видеть кнопки ответа
+const isMyOutgoing = (task.from_role === myRole || task.from === myRole)
+                   && (task.from_office || 'HQ') === myOfficeId;
+// canAct = false только если статус уничтожена
+const canAct = isMyTask && !isMyOutgoing && !FINAL_STATUSES.includes(task.status);
 
   const dateStr = task.created_at || task.createdAt || '';
   const time    = dateStr
@@ -321,8 +358,6 @@ function updateTaskRowEl(tr, task) {
     {value:'отклонена',    label:'🚫 Отклонить'},
   ];
 
-  // canAct = false только если статус уничтожена
-  const canAct = isMyTask && !FINAL_STATUSES.includes(task.status);
 
   tr.innerHTML = `
     <td style="font-size:12px;color:#666;padding:6px 8px;white-space:nowrap;">${time}</td>

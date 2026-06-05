@@ -74,6 +74,7 @@ function handleWsMessage(msg) {
     case 'TASK_UPDATED':
     case 'TASK_UPDATE':
       updateTaskInPanel(msg.task);
+      _updateTasksByTarget(msg.task);
       refreshTaskCellByTargetId(msg.task);
       break;
 
