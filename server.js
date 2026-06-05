@@ -124,7 +124,7 @@ function getOnlineByOffice() {
 const EXTENSION_DIR = path.join(__dirname, 'extension');
 const HTTP_PORT     = 5001;
 
-const ALLOWED_FILES = ['manifest.json','content.js','background.js','inject.js','version.json'];
+const ALLOWED_FILES = ['manifest.json','content.js','background.js','inject.js','version.json','astra_extension.zip'];
 const MIME_TYPES    = { '.js':'application/javascript', '.json':'application/json', '.png':'image/png' };
 
 const httpServer = http.createServer((req, res) => {
