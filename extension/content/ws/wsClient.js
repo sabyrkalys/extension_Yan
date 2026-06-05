@@ -81,9 +81,13 @@ function connectWS() {
       }
 
       // AUTH_ERROR — НЕ удаляем токен автоматически
+      // Стало:
       if (msg.type === 'AUTH_ERROR') {
         console.error('[ws] ❌ Ошибка авторизации:', msg.text);
-        showToast('❌ ' + msg.text + ' — обратитесь к администратору', 'error');
+        // Показываем тост только если пользователь ещё не авторизован
+        if (!store.get('myUsername')) {
+          showToast('❌ ' + msg.text + ' — обратитесь к администратору', 'error');
+        }
         return;
       }
 
