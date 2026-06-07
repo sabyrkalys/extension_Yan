@@ -1068,14 +1068,24 @@ async function planTargetForDate(targetId, targetTitle, planDate, rowData) {
     if (targetDateBtn) {
       targetDateBtn.click();
     } else {
-      // Кнопки даты нет — обновляем дерево и таблицу
+      // Кнопки даты нет — обновляем дерево, потом ищем снова
       await renderDatePanel(true);
-      const newTree = JSON.parse(localStorage.getItem(CACHE_KEY_DATES) || 'null');
-      const entry   = newTree?.dates?.find(d => d.date === planDate);
-      if (entry) {
-        const rows = await loadTargetsFromFolder(entry.folderIds || entry.folderId, planDate, true);
-        populateTable(rows);
-        updateUndefeatedBadge(planDate, rows);
+      const newBtn = document.querySelector(`#dates-list button[data-date="${planDate}"]`);
+      if (newBtn) {
+        // После renderDatePanel кнопка появилась — кликаем
+        newBtn.click();
+      } else {
+        // Совсем нет папки — грузим напрямую
+        const newTree = JSON.parse(localStorage.getItem(CACHE_KEY_DATES) || 'null');
+        const entry   = newTree?.dates?.find(d => d.date === planDate);
+        if (entry) {
+          activeFolderId   = entry.folderId;
+          activeFolderDate = planDate;
+          const rows = await loadTargetsFromFolder(entry.folderIds || entry.folderId, planDate, true);
+          populateTable(rows);
+          refreshAllTaskCells();
+          updateUndefeatedBadge(planDate, rows);
+        }
       }
     }
   } catch (err) {
