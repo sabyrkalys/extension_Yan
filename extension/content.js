@@ -1271,7 +1271,7 @@ async function loadTargetsFromFolder(folderIds, dateKey, forceRefresh = false) {
     const body = {
       maxDepth: 5, // увеличено — объекты могут лежать в подпапках (напр. "спланировано на...")
       withCounters: false,
-      sortingParams: { field: 'createdAt', destination: 'desc', folderFirst: 'asc' },
+      sortingParams: { field: 'title', destination: 'asc', folderFirst: 'desc' },
       filterCriteria: [],
       templateIDs: [1, 2],
       parentEntityID: folderId,
