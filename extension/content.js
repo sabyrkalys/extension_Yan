@@ -17,6 +17,9 @@ let activeFolderDate = null;
 let latestFolderId   = null;
 let latestFolderDate = null;
 
+// Счётчик непрочитанных задач — используется в tasks.js и wsHandlers.js
+let unreadTaskCount = 0;
+
 // ROLE_TO_USERS определён в config.js (подключается первым в manifest.json)
 
 // Определить роль по username — перебираем все роли и ищем username в массиве
@@ -417,12 +420,12 @@ function handleUserIdentified(userId, username, displayName) {
   if (resolved) {
     myRole = resolved.role;
     store.set('myOfficeId', resolved.officeId);
-    console.log('[content] ✅ Роль определена:', myRole, '| подразделение:', resolved.officeId);
+    console.log('[content] ✅ Роль определена:', myRole, '| Офис:', resolved.officeId);
   } else {
     const localRole = resolveRoleLocally(username);
     if (localRole) { myRole = localRole; }
     store.set('myOfficeId', store.get('myOfficeId') || 'HQ');
-    console.log('[content] ⚠️ Роль/подразделение не найдены для:', username, '→ используем HQ');
+    console.log('[content] ⚠️ Роль/офис не найдены для:', username, '→ используем HQ');
   }
 
   wsRegisterWithUser(userId, username, displayName, myRole);
@@ -581,24 +584,8 @@ async function loadFromAstraMap(date) {
       else if (resultValue === 'Принятно на доразведку') result = 'принятно_на_доразведку';
       else if (resultValue === 'Подтверждена') result = 'подтверждена';
 
-      const categoryValue = params["6"]?.value || '';
-      let resultCategory = '';
-      switch (categoryValue) {
-        case '1010000': resultCategory = 'ПУ'; break;
-        case '1080300': resultCategory = 'ПУ БПЛА'; break;
-        case '1080200': resultCategory = 'Точка влета'; break;
-        case '1100000': resultCategory = 'РЭБ'; break;
-        case '1040503': resultCategory = 'ЗРК'; break;
-        case '1090000': resultCategory = 'Связь'; break;
-        case '1040202': resultCategory = 'Танк'; break;
-        case '1040204': resultCategory = 'БМП'; break;
-        case '1040205': resultCategory = 'ББМ'; break;
-        case '1040402': resultCategory = 'РЛС'; break;
-        case '1130900': resultCategory = 'Склад'; break;
-        case '1011100': resultCategory = 'КНП'; break;
-        case '1110100': resultCategory = 'Укрытие'; break;
-        default: resultCategory = '';
-      }
+      const categoryValue  = params["6"]?.value || '';
+      const resultCategory = TARGET_TYPE_MAP[categoryValue] || '';
 
       return {
         targetNumber: item.entity.id || '',
@@ -1064,6 +1051,10 @@ async function planTargetForDate(targetId, targetTitle, planDate, rowData) {
     cacheDelete(CACHE_KEY_PREFIX + sourceDateKey);
     cacheDelete(CACHE_KEY_PREFIX + planDate);
 
+    // Ждём пока AstraMap применит relink на сервере
+    showToast('⏳ Обновляем таблицу...', 'info');
+    await new Promise(r => setTimeout(r, 1500));
+
     // Переключаемся на целевую дату в основной таблице
     const planningPanel = document.querySelector('#planningPanel');
     const tableWrapper  = document.querySelector('.table-wrapper');
@@ -1072,14 +1063,20 @@ async function planTargetForDate(targetId, targetTitle, planDate, rowData) {
     if (tableWrapper)  tableWrapper.style.display  = '';
     if (planBtn)       planBtn.textContent          = '📅 Спланировано';
 
-    // Находим кнопку нужной даты и кликаем по ней
+    // Находим кнопку нужной даты в панели дат и кликаем
     const targetDateBtn = document.querySelector(`#dates-list button[data-date="${planDate}"]`);
     if (targetDateBtn) {
       targetDateBtn.click();
     } else {
-      // Кнопки даты нет — перезагружаем панель дат и перезагружаем Спланировано
+      // Кнопки даты нет — обновляем дерево и таблицу
       await renderDatePanel(true);
-      await loadPlanningTargets();
+      const newTree = JSON.parse(localStorage.getItem(CACHE_KEY_DATES) || 'null');
+      const entry   = newTree?.dates?.find(d => d.date === planDate);
+      if (entry) {
+        const rows = await loadTargetsFromFolder(entry.folderIds || entry.folderId, planDate, true);
+        populateTable(rows);
+        updateUndefeatedBadge(planDate, rows);
+      }
     }
   } catch (err) {
     console.error('[plan]', err);
@@ -1274,7 +1271,7 @@ async function loadTargetsFromFolder(folderIds, dateKey, forceRefresh = false) {
     const body = {
       maxDepth: 5, // увеличено — объекты могут лежать в подпапках (напр. "спланировано на...")
       withCounters: false,
-      sortingParams: { field: 'title', destination: 'asc', folderFirst: 'desc' },
+      sortingParams: { field: 'createdAt', destination: 'desc', folderFirst: 'asc' },
       filterCriteria: [],
       templateIDs: [1, 2],
       parentEntityID: folderId,
@@ -1343,56 +1340,7 @@ async function loadTargetsFromFolder(folderIds, dateKey, forceRefresh = false) {
     };
     const result = resultMap[resultValue] || 'вскрыто';
 
-    const catMap = {
-      // Пункты управления
-      '1010000':'ПУ','1010100':'ПУ армии','1010200':'ПУ корпуса',
-      '1010300':'ПУ дивизии','1010400':'ПУ бригады','1010500':'ПУ полка',
-      '1010600':'ПУ батальона','1010700':'ПУ роты','1010800':'ПУ взвода',
-      '1010900':'ПУ отделения','1011000':'ПУ группы','1011100':'КНП',
-      // Бронетехника
-      '1040000':'Бронетехника',
-      '1040201':'Т-55','1040202':'Танк','1040203':'Т-72','1040204':'БМП',
-      '1040205':'ББМ','1040206':'БТР','1040207':'БРДМ','1040208':'БМД',
-      '1040209':'МТ-ЛБ','1040210':'Бронеавтомобиль',
-      // Артиллерия
-      '1040301':'Гаубица','1040302':'САУ','1040303':'РСЗО',
-      '1040304':'Миномёт','1040305':'Пушка','1040306':'ПТРК',
-      '1040307':'БМ ПТУР','1040308':'Орудие',
-      // РЛС и РЭБ
-      '1040401':'РЛС (общ)','1040402':'РЛС','1040403':'РЛС АРТ',
-      '1040404':'РЛС ПВО','1040405':'РЛС БПЛА','1040406':'РЛС НРТР',
-      '1040407':'РЛС разв.','1040408':'РЛС управл.',
-      '1100000':'РЭБ','1100100':'РЭБ (станция)','1100200':'РЭБ (комплекс)',
-      '1100300':'РЭБ (авт.)','1100400':'РЭБ (носимый)','1100500':'РЭБ БПЛА',
-      // ПВО / ЗРК
-      '1040500':'ПВО',
-      '1040501':'ПЗРК','1040502':'ЗРК малой дальн.','1040503':'ЗРК',
-      '1040504':'ЗРК средней дальн.','1040505':'ЗРК большой дальн.',
-      '1040506':'ЗАК','1040507':'ЗРК (авт.)',
-      // БПЛА
-      '1080000':'БПЛА',
-      '1080100':'БПЛА разв.','1080200':'Точка влета','1080300':'ПУ БПЛА',
-      '1080301':'ПУ БПЛА (малый)','1080302':'ПУ БПЛА (средний)',
-      '1080303':'ПУ БПЛА (большой)','1080304':'ПУ БПЛА (авт.)',
-      '1080400':'Аэродром БПЛА',
-      // Связь
-      '1090000':'Связь','1090100':'Узел связи','1090200':'Ретранслятор',
-      '1090300':'Радиостанция','1090400':'КВ-станция','1090500':'УКВ-станция',
-      // Укрытия и позиции
-      '1110000':'Укрытие',
-      '1110100':'Укрытие','1110101':'Блиндаж','1110102':'Окоп',
-      '1110103':'Траншея','1110104':'ДЗОТт','1110105':'ДОТ',
-      '1110200':'Позиция','1110300':'Рубеж','1110400':'Район',
-      // Склады
-      '1130000':'Склад','1130900':'Склад','1130901':'Склад БП',
-      '1130902':'Склад ГСМ','1130903':'Склад продовольствия',
-      '1130904':'Склад техники','1130905':'Склад РАВ',
-      // Прочее
-      '1020000':'Личный состав','1030000':'Инженерные объекты',
-      '1050000':'Авиация','1060000':'ВМФ','1070000':'Тыл',
-      '1120000':'Объект инфраструктуры','1140000':'Прочее',
-    };
-    const characteristic = catMap[params['6']?.value] || '';
+    const characteristic = TARGET_TYPE_MAP[params['6']?.value] || '';
 
     return {
       targetNumber: e.id || '',
@@ -1405,6 +1353,14 @@ async function loadTargetsFromFolder(folderIds, dateKey, forceRefresh = false) {
       result,
       defeatDate,
     };
+  });
+
+  // Сортируем по времени обнаружения убыванию — самое позднее время сверху
+  tableRows.sort((a, b) => {
+    const ta = a.impactTime || '';
+    const tb = b.impactTime || '';
+    // Сравниваем как строки HH:MM — работает корректно (лексикографически)
+    return tb.localeCompare(ta);
   });
 
   // Кэшируем только если есть результат

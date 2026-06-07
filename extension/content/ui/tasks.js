@@ -71,6 +71,7 @@ function renderTaskCell(cell, targetId, targetTitle, canAssign = true) {
     cell.innerHTML = '<span style="color:#ccc;font-size:11px;">—</span>';
   }
 }
+
 // Обновить tasksByTarget в store — вызывается при загрузке истории
 function _updateTasksByTarget(task) {
   const tid = task?.target_id || task?.targetId;
@@ -81,7 +82,8 @@ function _updateTasksByTarget(task) {
     tasksByTarget[tid] = task;
   }
 }
-// ── Открыть модал новой задаgrep -n "loadPlansForDate\|GET_PLANS\|PLANS_LIST\|tasksByTarget" /opt/astramap/extension/content/ws/wsHandlers.jsчи ────────────────────────────────────────────────
+
+// ── Открыть модал новой задачи ────────────────────────────────────────────────
 function openNewTaskModal(targetId, targetTitle) {
   if (!myRole) { showToast('Сначала войдите — расчёт не определён', 'error'); return; }
   const modal = document.querySelector('#newTaskModal');
@@ -293,6 +295,7 @@ function updateTaskInPanel(task) {
   if (existing) updateTaskRowEl(existing, task);
   else addTaskToPanel(task);
 }
+
 // Кэш задач по id для быстрой сортировки
 const _tasksCache = {};
 
@@ -303,8 +306,9 @@ function _getTaskById(taskId) {
 function _cacheTask(task) {
   if (task?.id) _tasksCache[task.id] = task;
 }
+
 function renderTaskRow(task) {
-  _cacheTask(task); // ← добавить
+  _cacheTask(task);
   const tr = document.createElement('tr');
   tr.setAttribute('data-task-id', task.id);
   updateTaskRowEl(tr, task);
@@ -312,7 +316,7 @@ function renderTaskRow(task) {
 }
 
 function updateTaskRowEl(tr, task) {
-  _cacheTask(task); 
+  _cacheTask(task);
   const color = STATUS_COLORS[task.status] || '#888';
 
   // Подразделение отправителя и получателя
@@ -325,20 +329,21 @@ function updateTaskRowEl(tr, task) {
   const toRole   = (task.to_role   || task.to   || '?') + toOffice;
 
   // isMyTask — проверяем и роль и подразделение
-  const myOfficeId = store.get('myOfficeId') || 'HQ';
+  const myOfficeId     = store.get('myOfficeId') || 'HQ';
   const toRole_check   = task.to_role || task.to || '';
-const toOffice_check = task.to_office || '';
+  const toOffice_check = task.to_office || '';
 
-const isMyTask = toRole_check === myRole && (
-  toOffice_check === '' ? true :        // старые задачи без офиса — по роли
-  toOffice_check === myOfficeId         // новые задачи — роль + офис
-);
+  const isMyTask = toRole_check === myRole && (
+    toOffice_check === '' ? true :      // старые задачи без офиса — по роли
+    toOffice_check === myOfficeId       // новые задачи — роль + офис
+  );
 
-// Дополнительная защита — отправитель не должен видеть кнопки ответа
-const isMyOutgoing = (task.from_role === myRole || task.from === myRole)
-                   && (task.from_office || 'HQ') === myOfficeId;
-// canAct = false только если статус уничтожена
-const canAct = isMyTask && !isMyOutgoing && !FINAL_STATUSES.includes(task.status);
+  // Дополнительная защита — отправитель не видит кнопки ответа
+  const isMyOutgoing = (task.from_role === myRole || task.from === myRole)
+                     && (task.from_office || 'HQ') === myOfficeId;
+
+  // canAct = false только если статус уничтожена
+  const canAct = isMyTask && !isMyOutgoing && !FINAL_STATUSES.includes(task.status);
 
   const dateStr = task.created_at || task.createdAt || '';
   const time    = dateStr
@@ -357,7 +362,6 @@ const canAct = isMyTask && !isMyOutgoing && !FINAL_STATUSES.includes(task.status
     {value:'уничтожена',   label:'🔥 Уничтожена'},
     {value:'отклонена',    label:'🚫 Отклонить'},
   ];
-
 
   tr.innerHTML = `
     <td style="font-size:12px;color:#666;padding:6px 8px;white-space:nowrap;">${time}</td>
