@@ -20,7 +20,7 @@ const FINAL_STATUSES = ['уничтожена'];
 
 // ── Ячейка задачи в таблице целей ────────────────────────────────────────────
 function renderTaskCell(cell, targetId, targetTitle, canAssign = true) {
-  const tasksByTarget = store.get('tasksByTarget');
+  const tasksByTarget = store.get('tasksByTarget') || {};
   const task = tasksByTarget[targetId] || null;
   cell.innerHTML = '';
 
@@ -69,7 +69,7 @@ function renderTaskCell(cell, targetId, targetTitle, canAssign = true) {
 function _updateTasksByTarget(task) {
   const tid = task?.target_id || task?.targetId;
   if (!tid) return;
-  const tasksByTarget = store.get('tasksByTarget');
+  const tasksByTarget = store.get('tasksByTarget') || {};
   if (!tasksByTarget[tid] || task.id >= tasksByTarget[tid].id) {
     tasksByTarget[tid] = task;
   }
@@ -273,7 +273,7 @@ function addTaskToPanel(task) {
   }
   if (!inserted) tbody.appendChild(row);
 
-  const tasksByTarget = store.get('tasksByTarget');
+  const tasksByTarget = store.get('tasksByTarget') || {};
   const tid = task.target_id || task.targetId;
   if (tid && (!tasksByTarget[tid] || task.id >= tasksByTarget[tid].id)) {
     tasksByTarget[tid] = task;
@@ -404,20 +404,20 @@ function refreshAllTaskCells() {
     const targetId    = row.getAttribute('data-target-id') || row.dataset.targetId;
     const targetTitle = row.querySelector('.char-cell select')?.value || '';
     const taskCell    = row.querySelector('.task-cell');
-    if (taskCell && targetId) renderTaskCell(taskCell, targetId, targetTitle, false);
+    if (taskCell && targetId) renderTaskCell(taskCell, targetId, targetTitle, true);
   });
 }
 
 function refreshTaskCellByTargetId(task) {
   const tid = task?.target_id || task?.targetId;
   if (!tid) return;
-  const tasksByTarget = store.get('tasksByTarget');
+  const tasksByTarget = store.get('tasksByTarget') || {};
   if (!tasksByTarget[tid] || task.id >= tasksByTarget[tid].id) tasksByTarget[tid] = task;
   const row = document.querySelector(`#statusTable tr[data-target-id="${tid}"]`);
   if (!row) return;
   const cell  = row.querySelector('.task-cell');
   const title = row.querySelector('.char-cell select')?.value || '';
-  if (cell) renderTaskCell(cell, tid, title, false);
+  if (cell) renderTaskCell(cell, tid, title, true);
 }
 
 function refreshAllBadges() { updateTaskBadge(); }
