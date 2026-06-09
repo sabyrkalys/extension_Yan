@@ -637,13 +637,11 @@ function buildCharSelect(currentVal) {
 const _mediaFlags = {};
 
 function populateTable(dataArray) {
-  console.log('[populateTable] Получено данных для таблицы:', dataArray);
   const tbody = document.querySelector('#statusTable tbody');
   if (!tbody) return;
   tbody.innerHTML = '';
 
   const rows = deduplicateById(dataArray, 'targetNumber');
-  console.log(`[populateTable] Дедупликация: ${dataArray.length} → ${rows.length} строк для отображения`, rows);
   if (rows.length < dataArray.length) {
     console.warn(`[table] Убрано дублей: ${dataArray.length - rows.length}`);
   }
@@ -651,64 +649,69 @@ function populateTable(dataArray) {
   const today   = getMoscowDateStr();
   const isToday = activeFolderDate === today || activeFolderDate === null;
 
+  // Стиль ячейки — все по центру
+  const CS = 'text-align:center;vertical-align:middle;padding:4px 6px;';
+
   rows.forEach((item, idx) => {
     const row = tbody.insertRow();
     row.setAttribute('data-target-id', item.targetNumber || '');
     row.setAttribute('data-impact-time', item.impactTime || '');
 
-    const DEFEATED_RESULTS = ['поражена', 'подтверждено', 'подавлено'];
-    if (DEFEATED_RESULTS.includes(item.result)) {
+    // Оранжевый фон для поражённых
+    const DEFEATED = ['поражена', 'подтверждено', 'подавлено'];
+    if (DEFEATED.includes(item.result)) {
       row.style.background = 'rgba(255,140,0,0.12)';
       row.style.borderLeft = '3px solid #fd7e14';
     }
 
-    // col 0: Дата обнаруж. (дата + время)
+    // ── col 0: Дата обнаруж. ──────────────────────────────────────────────
     const cellDate = row.insertCell(0);
     const datePart = item.defeatDate || '';
     const timePart = item.impactTime || '';
     const dateDisp = datePart ? datePart.replace(/^(\d{4})-(\d{2})-(\d{2})$/, '$3.$2') : '';
     cellDate.innerHTML = `<span style="font-size:11px;white-space:nowrap;">${dateDisp || '—'}<br><span style="color:#888;">${timePart}</span></span>`;
-    cellDate.style.cssText = 'text-align:center;padding:4px 6px;vertical-align:middle;';
+    cellDate.style.cssText = CS;
 
-    // col 1: Номер цели
+    // ── col 1: Номер цели ─────────────────────────────────────────────────
     const cellNum = row.insertCell(1);
     cellNum.innerText = item.targetNumber || (idx + 1).toString();
-    cellNum.style.cssText = 'text-align:center;font-size:12px;padding:4px 6px;';
+    cellNum.style.cssText = CS + 'font-size:12px;';
 
-    // col 2: Характер цели (иерархический select)
+    // ── col 2: Характер цели ──────────────────────────────────────────────
     const cellChar = row.insertCell(2);
     cellChar.classList.add('char-cell');
-    cellChar.style.cssText = 'padding:3px 4px;vertical-align:middle;';
+    cellChar.style.cssText = CS + 'padding:3px 4px;';
     const selectChar = buildCharSelect(item.characteristic || '');
+    selectChar.style.cssText = 'width:100%;font-size:11px;padding:2px 3px;border-radius:4px;border:1px solid #ccc;';
     cellChar.appendChild(selectChar);
 
-    // col 3: Место
+    // ── col 3: Адрес цели (read-only — вводится через модал) ─────────────
     const cellPlace = row.insertCell(3);
-    cellPlace.style.cssText = 'padding:3px 4px;vertical-align:middle;';
-    const inputPlace = document.createElement('input');
-    inputPlace.type  = 'text';
-    inputPlace.value = item.place || '';
-    inputPlace.placeholder = 'Адрес цели';
-    inputPlace.style.cssText = 'width:100%;font-size:11px;padding:3px 6px;border-radius:4px;border:1px solid #ccc;max-width:90px;box-sizing:border-box;';
-    cellPlace.appendChild(inputPlace);
+    cellPlace.style.cssText = CS + 'padding:3px 4px;';
+    const placeSpan = document.createElement('span');
+    placeSpan.innerText = item.place || '';
+    placeSpan.title     = item.place || 'Адрес не указан';
+    placeSpan.style.cssText = 'font-size:11px;color:#555;display:block;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    cellPlace.appendChild(placeSpan);
 
-    // col 4: X (read-only)
+    // ── col 4: X (read-only, фикс. ширина) ───────────────────────────────
     const cellX = row.insertCell(4);
     cellX.innerText = item.coordX || '';
     cellX.setAttribute('data-lon', item.originalLon ?? '');
-    cellX.style.cssText = 'text-align:center;font-size:11px;padding:4px 6px;white-space:nowrap;';
+    cellX.style.cssText = CS + 'font-size:11px;white-space:nowrap;width:80px;min-width:80px;max-width:80px;';
 
-    // col 5: Y (read-only)
+    // ── col 5: Y (read-only, та же ширина что X) ──────────────────────────
     const cellY = row.insertCell(5);
     cellY.innerText = item.coordY || '';
     cellY.setAttribute('data-lat', item.originalLat ?? '');
-    cellY.style.cssText = 'text-align:center;font-size:11px;padding:4px 6px;white-space:nowrap;';
+    cellY.style.cssText = CS + 'font-size:11px;white-space:nowrap;width:80px;min-width:80px;max-width:80px;';
 
-    // col 6: Просмотр на карте (👁 + медиа-индикатор)
+    // ── col 6: Просмотр на карте ──────────────────────────────────────────
     const cellView = row.insertCell(6);
-    cellView.style.cssText = 'text-align:center;vertical-align:middle;padding:4px;';
+    cellView.style.cssText = CS;
 
     const targetEntityId = item.targetNumber || '';
+
     const btnView = document.createElement('a');
     btnView.classList.add('btnView');
     btnView.href   = `https://center.astramaps.ru/map/${targetEntityId}`;
@@ -716,38 +719,46 @@ function populateTable(dataArray) {
     btnView.rel    = 'noopener noreferrer';
     btnView.innerHTML = '👁️';
     btnView.title  = 'Просмотр в AstraMap';
-    btnView.style.cssText = 'display:inline-block;padding:4px 8px;background:#2c7da0;color:white;border-radius:4px;font-size:15px;text-decoration:none;margin-bottom:3px;';
-    btnView.addEventListener('click', e =>
-      console.log('[btnView]', e.currentTarget.getAttribute('href'))
-    );
+    btnView.style.cssText = 'display:inline-block;padding:3px 7px;background:#2c7da0;color:white;border-radius:4px;font-size:14px;text-decoration:none;';
 
-    const hasMedia = !!_mediaFlags[targetEntityId];
-    const btnMedia = document.createElement('button');
-    btnMedia.title    = hasMedia ? 'Фото/видео есть' : 'Нет фото/видео';
-    btnMedia.innerHTML = '📷';
-    btnMedia.style.cssText = `display:block;margin:2px auto 0;padding:2px 6px;font-size:13px;
-      border:none;border-radius:4px;cursor:pointer;
-      background:${hasMedia ? '#28a745' : '#e9ecef'};
-      color:${hasMedia ? 'white' : '#aaa'};
-      opacity:${hasMedia ? '1' : '0.5'};`;
-    btnMedia.addEventListener('click', () => {
-      _mediaFlags[targetEntityId] = !_mediaFlags[targetEntityId];
-      const on = _mediaFlags[targetEntityId];
-      btnMedia.title            = on ? 'Фото/видео есть' : 'Нет фото/видео';
-      btnMedia.style.background = on ? '#28a745' : '#e9ecef';
-      btnMedia.style.color      = on ? 'white'    : '#aaa';
-      btnMedia.style.opacity    = on ? '1'        : '0.5';
-    });
+    // Медиа-индикаторы — маленькие
+    const hasPhoto = !!_mediaFlags[targetEntityId + '_photo'];
+    const hasVideo = !!_mediaFlags[targetEntityId + '_video'];
+
+    const makeMediaBtn = (type, emoji, flagKey) => {
+      const btn = document.createElement('button');
+      const on  = !!_mediaFlags[flagKey];
+      btn.innerHTML = emoji;
+      btn.title     = on ? `${type} загружено` : `${type} нет`;
+      btn.style.cssText = `font-size:10px;padding:1px 4px;border:none;border-radius:3px;cursor:pointer;
+        background:${on ? '#28a745' : '#dee2e6'};
+        color:${on ? 'white' : '#aaa'};
+        opacity:${on ? '1' : '0.6'};`;
+      btn.addEventListener('click', () => {
+        _mediaFlags[flagKey] = !_mediaFlags[flagKey];
+        const nowOn = _mediaFlags[flagKey];
+        btn.title            = nowOn ? `${type} загружено` : `${type} нет`;
+        btn.style.background = nowOn ? '#28a745' : '#dee2e6';
+        btn.style.color      = nowOn ? 'white'    : '#aaa';
+        btn.style.opacity    = nowOn ? '1'        : '0.6';
+      });
+      return btn;
+    };
+
+    const mediaWrap = document.createElement('div');
+    mediaWrap.style.cssText = 'display:flex;gap:3px;justify-content:center;margin-top:3px;';
+    mediaWrap.appendChild(makeMediaBtn('Фото', '📷', targetEntityId + '_photo'));
+    mediaWrap.appendChild(makeMediaBtn('Видео', '🎥', targetEntityId + '_video'));
 
     cellView.appendChild(btnView);
-    cellView.appendChild(btnMedia);
+    cellView.appendChild(mediaWrap);
 
-    // col 7: Результат
+    // ── col 7: Результат ──────────────────────────────────────────────────
     const cellRes = row.insertCell(7);
-    cellRes.style.cssText = 'padding:3px 4px;vertical-align:middle;';
+    cellRes.style.cssText = CS + 'padding:3px 4px;';
     const selectRes = document.createElement('select');
     selectRes.style.cssText = 'width:100%;font-size:11px;padding:2px 4px;border-radius:4px;border:1px solid #ccc;';
-    const resOpts = [
+    [
       { val: '',                       txt: '— Результат —', dis: true },
       { val: 'вскрыто',                txt: 'Вскрыт' },
       { val: 'передано_на_доразведку', txt: 'Передано на доразведку' },
@@ -756,8 +767,7 @@ function populateTable(dataArray) {
       { val: 'не_поражена',            txt: 'Не поражена' },
       { val: 'подавлено',              txt: 'Подавлено' },
       { val: 'уничтожена',             txt: 'Уничтожена' },
-    ];
-    resOpts.forEach(o => {
+    ].forEach(o => {
       const opt = document.createElement('option');
       opt.value = o.val; opt.textContent = o.txt;
       if (o.dis) opt.disabled = true;
@@ -767,25 +777,47 @@ function populateTable(dataArray) {
     });
     cellRes.appendChild(selectRes);
 
-    // col 8: Назначить задачу
+    // ── col 8: Назначить задачу ───────────────────────────────────────────
     const cellTask = row.insertCell(8);
     cellTask.setAttribute('data-target-id', item.targetNumber || '');
     cellTask.classList.add('task-cell');
-    cellTask.style.cssText = 'text-align:center;vertical-align:middle;padding:4px 6px;';
+    cellTask.style.cssText = CS;
     renderTaskCell(cellTask, item.targetNumber || '', item.characteristic || '', isToday);
 
-    // col 9: Дата уничтожения
+    // ── col 9: Дата уничтожения ───────────────────────────────────────────
     const cellDestroy = row.insertCell(9);
-    cellDestroy.style.cssText = 'text-align:center;padding:3px 4px;vertical-align:middle;';
-    const inputDestroy = document.createElement('input');
-    inputDestroy.type  = 'date';
-    inputDestroy.value = item.defeatDate || '';
-    inputDestroy.style.cssText = 'font-size:11px;padding:2px 4px;border-radius:4px;border:1px solid #ccc;max-width:110px;';
-    cellDestroy.appendChild(inputDestroy);
+    cellDestroy.style.cssText = CS + 'padding:3px 4px;';
 
-    // col 10: Сформировать формуляр
+    const destroySpan = document.createElement('span');
+    destroySpan.classList.add('destroy-label');
+
+    const setDestroyDisplay = (result, dateVal) => {
+      if (result === 'уничтожена') {
+        const now = dateVal || getMoscowDateStr() + ' ' + getMoscowTimeStr();
+        destroySpan.innerHTML = `<span style="color:#dc3545;font-size:10px;font-weight:600;">🔥 Уничтожена</span><br>
+          <span style="font-size:10px;color:#555;">${now}</span>`;
+      } else {
+        destroySpan.innerHTML = '<span style="color:#aaa;">—</span>';
+      }
+    };
+
+    // Инициализируем
+    setDestroyDisplay(item.result, item.defeatDate ? (item.defeatDate + ' ' + (item.impactTime || '')) : '');
+    cellDestroy.appendChild(destroySpan);
+
+    // При изменении Результата — обновляем Дату уничтожения
+    selectRes.addEventListener('change', () => {
+      const now = getMoscowDateStr() + ' ' + getMoscowTimeStr();
+      setDestroyDisplay(selectRes.value, now);
+      // Оранжевый фон
+      const DEFEATED = ['поражена', 'подтверждено', 'подавлено'];
+      row.style.background = DEFEATED.includes(selectRes.value) ? 'rgba(255,140,0,0.12)' : '';
+      row.style.borderLeft = DEFEATED.includes(selectRes.value) ? '3px solid #fd7e14' : '';
+    });
+
+    // ── col 10: Сформировать формуляр ────────────────────────────────────
     const cellForm = row.insertCell(10);
-    cellForm.style.cssText = 'text-align:center;padding:4px;vertical-align:middle;';
+    cellForm.style.cssText = CS;
     const btnForm = document.createElement('button');
     btnForm.classList.add('btnForm');
     btnForm.innerText = 'Сформировать';
@@ -799,8 +831,10 @@ function populateTable(dataArray) {
         coordY:         cellY.innerText.trim(),
         impactTime:     row.getAttribute('data-impact-time') || '',
         result:         selectRes.value,
-        defeatDate:     inputDestroy.value || '',
-        place:          inputPlace.value || '',
+        defeatDate:     getMoscowDateStr(),
+        place:          placeSpan.innerText.trim(),
+        originalLon:    parseFloat(cellX.getAttribute('data-lon')) || null,
+        originalLat:    parseFloat(cellY.getAttribute('data-lat')) || null,
       };
       await apiSendTarget(currentRowData);
     }, { label: '⏳ Отправка...' }));
