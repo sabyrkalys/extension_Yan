@@ -12,7 +12,7 @@ function createPopup() {
     position: fixed;
     top: 25px;
     right: 20px;
-    width: 60%;
+    width: 70%;
     max-height: calc(100vh - 40px);
     background: white;
     border-radius: 12px;
@@ -105,7 +105,7 @@ function createPopup() {
     <th rowspan="2" style="min-width:70px;">Дата обнаруж.</th>
     <th rowspan="2">Номер цели</th>
     <th rowspan="2" style="min-width:130px;">Характер цели</th>
-    <th rowspan="2" style="min-width:80px;">Место</th>
+    <th rowspan="2" style="min-width:80px;">Адрес цели</th>
     <th colspan="2">Координаты</th>
     <th rowspan="2">Просмотр на карте</th>
     <th rowspan="2" style="min-width:120px;">Результат</th>

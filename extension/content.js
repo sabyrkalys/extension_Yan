@@ -35,23 +35,6 @@ if (!getToken()) {
   console.warn('⚠️ [config] Токен авторизации не найден — ожидаем входа пользователя');
 }
 
-// convertWgs84ToSk42, convertSk42ToWgs84 — content/utils/coords.js
-
-// ======================== API НАСТРОЙКИ ========================
-// ASTRA_API, ROOT_FOLDER_ID, CACHE_KEY_PREFIX, CACHE_KEY_DATES, CACHE_TTL_MS
-// — определены в config.js (подключается первым в manifest.json)
-
-// cleanOldCache, cacheGet, cacheSet, cacheDelete, cacheClearAll — content/cache/cache.js
-
-// connectWS, wsSend, wsRegister, wsRegisterWithUser — content/ws/wsClient.js
-
-// handleWsMessage, handleIncomingTask, wsRegisterWithUser, wsRegister, wsSend — content/ws/
-
-// ── Рендер ячейки «Назначить задачу» в основной таблице ─────────────────────────
-// Показывает текущую активную задачу по цели (видят все) + кнопку назначить новую.
-// renderTaskCell, openNewTaskModal — content/ui/tasks.js
-
-
 // ── Бейдж непоражённых целей на вкладке даты ────────────────────────────────
 function updateUndefeatedBadge(date, rows) {
   const DEFEATED = ['поражена', 'подтверждено', 'подавлено'];
@@ -147,7 +130,6 @@ async function initBadgesFromCache() {
 
 // Обновить все бейджи при изменении задач (из кэша)
 // → content/ui/tasks.js или content/ui/planning.js
-
 
 // ── Панель Планирование — все непоражённые цели по всем датам ────────────────
 async function loadPlanningTargets() {
@@ -324,89 +306,6 @@ async function loadPlanningTargets() {
   }
 }
 
-// ── Перенос задачи на другой день ────────────────────────────────────────────
-// showRescheduleModal — content/ui/tasks.js
-
-  // const today = getMoscowDateStr();
-  // if (!activeFolderDate || activeFolderDate >= today) return;
-  // document.querySelectorAll('#statusTable td[data-target-id] button').forEach(btn => {
-  //   btn.disabled = true;
-  //   btn.style.opacity = '0.35';
-  //   btn.style.cursor  = 'not-allowed';
-  //   btn.title = 'Недоступно для прошедших дат';
-  // });
-
-
-// ── Перерисовать все ячейки задач в таблице целей (после загрузки истории)
-// → content/ui/tasks.js или content/ui/planning.js
-
-// Обновить ячейку задачи в таблице целей при изменении статуса
-// → content/ui/tasks.js или content/ui/planning.js
-
-// showRoleSelector, selectRoleManually — content/ui/roleSelector.js
-
-
-
-
-// showToast — content/ui/toast.js
-
-  // const el = document.createElement('div');
-  // el.style.cssText = `
-  //   position: fixed; top: 80px; right: 20px; z-index: 99998;
-  //   background: white; border-left: 4px solid #fd7e14;
-  //   border-radius: 8px; padding: 16px 20px; width: 300px;
-  //   box-shadow: 0 6px 24px rgba(0,0,0,0.2); font-family: system-ui, sans-serif;
-  //   animation: slideInToast 0.3s ease;
-  // `;
-  // const fromName = task.from_role || task.from || '?';
-  // const targetHint = task.targetTitle || task.target_title || '';
-
-  // el.innerHTML = `
-  //   <div style="font-weight:600;color:#fd7e14;margin-bottom:6px;">📋 Новая задача от: ${fromName}</div>
-  //   <div style="font-size:13px;color:#333;margin-bottom:4px;">${task.text}</div>
-  //   ${targetHint ? `<div style="font-size:12px;color:#666;">Объект: ${targetHint}</div>` : ''}
-  //   <div style="display:flex;gap:8px;margin-top:12px;">
-  //     <button class="notif-accept" style="flex:1;padding:6px;background:#28a745;color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;">✅ Принять</button>
-  //     <button class="notif-reject" style="flex:1;padding:6px;background:#dc3545;color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;">❌ Отклонить</button>
-  //   </div>
-  // `;
-
-  // // addEventListener вместо onclick — content.js изолирован от window страницы
-  // el.querySelector('.notif-accept').addEventListener('click', () => {
-  //   acceptTask(task.id);
-  //   el.remove();
-  // });
-  // el.querySelector('.notif-reject').addEventListener('click', () => {
-  //   rejectTask(task.id);
-  //   el.remove();
-  // });
-
-  // document.body.appendChild(el);
-  // setTimeout(() => el.remove(), 15000); 
-
-
-
-// toISOWithTime, utcIsoToMskTime, utcIsoToMskDate,
-// getMoscowNowISO, getMoscowDateStr, getMoscowTimeStr — content/utils/date.js
-
-// async function getTargetById(id) { → content/api/astraApi.js
-
-// async function getHeightAtPoint(lon, lat) { → content/api/astraApi.js
-
-// function parseCoord(coordStr) { → content/api/astraApi.js
-
-// ✅ FIX: Исправлен маппинг — "не поражена" → "Не поражена" (не "Вскрыто")
-// function mapResult(result) { → content/api/astraApi.js
-
-// function mapTargetType(characteristic) { → content/api/astraApi.js
-
-// inject.js загружается браузером напрямую (world: MAIN в manifest.json)
-// — динамический injectScript() больше не нужен
-
-// ── Получаем данные пользователя от inject.js ─────────────────────────────
-// inject.js перехватывает ответ /go/permission-group и диспатчит это событие.
-// Срабатывает автоматически при загрузке страницы — никакого клика не нужно.
-// Обрабатываем данные пользователя (из любого источника)
 function handleUserIdentified(userId, username, displayName) {
   if (myUsername === username) return; // уже обработали
 
@@ -494,8 +393,6 @@ async function fetchProfileDirect() {
     if (!myUsername) retryFetchProfile(attempt + 1); // не получилось — следующая попытка
   }, delay);
 })();
-
-// apiSendTarget → content/api/astraApi.js
 
 // ======================== ПОЛУЧЕНИЕ ДАННЫХ С КАРТЫ ========================
 async function loadFromAstraMap(date) {
@@ -617,274 +514,6 @@ async function loadFromAstraMap(date) {
 }
 
 // ======================== РАБОТА С ТАБЛИЦЕЙ ========================
-// function getTableData() {
-//   const tbody = document.querySelector('#statusTable tbody');
-//   if (!tbody) return [];
-//   const rows = tbody.querySelectorAll('tr');
-//   const data = [];
-//   rows.forEach((row, idx) => {
-//     const cells = row.cells;
-//     // Новая структура:
-//     // 0: Дата обнаруж.  1: Номер цели  2: Характер  3: Место
-//     // 4: X  5: Y  6: Просмотр  7: Результат  8: Задача  9: Дата уничт.  10: Формуляр
-//     const targetNumber   = cells[1]?.innerText.trim() || (idx + 1).toString();
-//     const charSelect     = cells[2]?.querySelector('select');
-//     const characteristic = charSelect ? charSelect.value : (cells[2]?.innerText.trim() || '');
-//     const place          = cells[3]?.querySelector('input')?.value || cells[3]?.innerText.trim() || '';
-//     const coordX         = cells[4]?.innerText.trim() || '';
-//     const coordY         = cells[5]?.innerText.trim() || '';
-//     const resSelect      = cells[7]?.querySelector('select');
-//     const result         = resSelect ? resSelect.value : '';
-//     const destroyDate    = cells[9]?.querySelector('input')?.value || cells[9]?.innerText.trim() || '';
-//     const impactTime     = row.getAttribute('data-impact-time') || '';
-//     data.push({ targetNumber, characteristic, coordX, coordY, impactTime, result,
-//                 defeatDate: destroyDate, place });
-//   });
-//   return data;
-// }
-
-// // ── Иерархические категории целей ────────────────────────────────────────────
-// const CHAR_CATEGORIES = [
-//   { group: 'Пункты управления', opts: [
-//     'ПУ', 'КНП', 'ПУ армии', 'ПУ корпуса', 'ПУ дивизии',
-//     'ПУ бригады', 'ПУ полка', 'ПУ батальона', 'ПУ роты',
-//   ]},
-//   { group: 'Бронетехника', opts: [
-//     'Танк', 'БМП', 'ББМ', 'БТР', 'БРДМ', 'БМД', 'МТ-ЛБ', 'Бронеавтомобиль',
-//   ]},
-//   { group: 'Артиллерия', opts: [
-//     'Гаубица', 'САУ', 'РСЗО', 'Миномёт', 'Пушка', 'ПТРК',
-//   ]},
-//   { group: 'ПВО / ЗРК', opts: [
-//     'ЗРК', 'ПЗРК', 'ЗРК малой дальн.', 'ЗРК средней дальн.', 'ЗРК большой дальн.', 'ЗАК',
-//   ]},
-//   { group: 'РЛС', opts: [
-//     'РЛС', 'РЛС АРТ', 'РЛС ПВО', 'РЛС БПЛА', 'РЛС разв.',
-//   ]},
-//   { group: 'РЭБ', opts: [
-//     'РЭБ', 'РЭБ (станция)', 'РЭБ (комплекс)', 'РЭБ БПЛА',
-//   ]},
-//   { group: 'БПЛА', opts: [
-//     'БПЛА', 'ПУ БПЛА', 'Точка влета', 'БПЛА разв.', 'Аэродром БПЛА',
-//   ]},
-//   { group: 'Связь', opts: [
-//     'Связь', 'Узел связи', 'Ретранслятор', 'Радиостанция',
-//   ]},
-//   { group: 'Укрытия / Позиции', opts: [
-//     'Укрытие', 'Блиндаж', 'Окоп', 'Траншея', 'ДОТ', 'Позиция', 'Рубеж',
-//   ]},
-//   { group: 'Склады', opts: [
-//     'Склад', 'Склад БП', 'Склад ГСМ', 'Склад техники',
-//   ]},
-//   { group: 'Прочее', opts: [
-//     'Личный состав', 'Авиация', 'Инженерные объекты', 'Тыловые объекты',
-//     'Инфраструктура', 'Гражданский объект', 'Местный предмет',
-//   ]},
-// ];
-
-// function buildCharSelect(currentVal) {
-//   const sel = document.createElement('select');
-//   sel.style.cssText = 'width:100%;font-size:11px;padding:2px 3px;border-radius:4px;border:1px solid #ccc;';
-//   const defOpt = document.createElement('option');
-//   defOpt.value = ''; defOpt.textContent = '— Характер —';
-//   if (!currentVal) defOpt.selected = true;
-//   sel.appendChild(defOpt);
-
-//   for (const grp of CHAR_CATEGORIES) {
-//     const og = document.createElement('optgroup');
-//     og.label = grp.group;
-//     for (const cat of grp.opts) {
-//       const o = document.createElement('option');
-//       o.value = cat; o.textContent = cat;
-//       if (cat === currentVal) o.selected = true;
-//       og.appendChild(o);
-//     }
-//     sel.appendChild(og);
-//   }
-//   // Если значение из TARGET_TYPE_MAP не в списке — добавляем отдельным option
-//   if (currentVal && !sel.querySelector(`option[value="${CSS.escape(currentVal)}"]`)) {
-//     const extra = document.createElement('option');
-//     extra.value = currentVal; extra.textContent = currentVal; extra.selected = true;
-//     sel.insertBefore(extra, sel.options[1]);
-//   }
-//   return sel;
-// }
-
-// // Кэш медиа-флагов (in-memory)
-// const _mediaFlags = {};
-
-// function populateTable(dataArray) {
-//   const tbody = document.querySelector('#statusTable tbody');
-//   if (!tbody) return;
-//   tbody.innerHTML = '';
-
-//   const rows = deduplicateById(dataArray, 'targetNumber');
-//   if (rows.length < dataArray.length) {
-//     console.warn(`[table] Убрано дублей: ${dataArray.length - rows.length}`);
-//   }
-
-//   const today   = getMoscowDateStr();
-//   const isToday = activeFolderDate === today || activeFolderDate === null;
-
-//   rows.forEach((item, idx) => {
-//     const row = tbody.insertRow();
-//     row.setAttribute('data-target-id', item.targetNumber || '');
-//     row.setAttribute('data-impact-time', item.impactTime || '');
-
-//     const DEFEATED_RESULTS = ['поражена', 'подтверждено', 'подавлено'];
-//     if (DEFEATED_RESULTS.includes(item.result)) {
-//       row.style.background = 'rgba(255,140,0,0.12)';
-//       row.style.borderLeft = '3px solid #fd7e14';
-//     }
-
-//     // col 0: Дата обнаруж. (дата + время)
-//     const cellDate = row.insertCell(0);
-//     const datePart = item.defeatDate || '';
-//     const timePart = item.impactTime || '';
-//     const dateDisp = datePart ? datePart.replace(/^(\d{4})-(\d{2})-(\d{2})$/, '$3.$2') : '';
-//     cellDate.innerHTML = `<span style="font-size:11px;white-space:nowrap;">${dateDisp || '—'}<br><span style="color:#888;">${timePart}</span></span>`;
-//     cellDate.style.cssText = 'text-align:center;padding:4px 6px;vertical-align:middle;';
-
-//     // col 1: Номер цели
-//     const cellNum = row.insertCell(1);
-//     cellNum.innerText = item.targetNumber || (idx + 1).toString();
-//     cellNum.style.cssText = 'text-align:center;font-size:12px;padding:4px 6px;';
-
-//     // col 2: Характер цели (иерархический select)
-//     const cellChar = row.insertCell(2);
-//     cellChar.classList.add('char-cell');
-//     cellChar.style.cssText = 'padding:3px 4px;vertical-align:middle;';
-//     const selectChar = buildCharSelect(item.characteristic || '');
-//     cellChar.appendChild(selectChar);
-
-//     // col 3: Место
-//     const cellPlace = row.insertCell(3);
-//     cellPlace.style.cssText = 'padding:3px 4px;vertical-align:middle;';
-//     const inputPlace = document.createElement('input');
-//     inputPlace.type  = 'text';
-//     inputPlace.value = item.place || '';
-//     inputPlace.placeholder = 'Место';
-//     inputPlace.style.cssText = 'width:100%;font-size:11px;padding:3px 6px;border-radius:4px;border:1px solid #ccc;max-width:90px;box-sizing:border-box;';
-//     cellPlace.appendChild(inputPlace);
-
-//     // col 4: X (read-only)
-//     const cellX = row.insertCell(4);
-//     cellX.innerText = item.coordX || '';
-//     cellX.setAttribute('data-lon', item.originalLon ?? '');
-//     cellX.style.cssText = 'text-align:center;font-size:11px;padding:4px 6px;white-space:nowrap;';
-
-//     // col 5: Y (read-only)
-//     const cellY = row.insertCell(5);
-//     cellY.innerText = item.coordY || '';
-//     cellY.setAttribute('data-lat', item.originalLat ?? '');
-//     cellY.style.cssText = 'text-align:center;font-size:11px;padding:4px 6px;white-space:nowrap;';
-
-//     // col 6: Просмотр на карте (👁 + медиа-индикатор)
-//     const cellView = row.insertCell(6);
-//     cellView.style.cssText = 'text-align:center;vertical-align:middle;padding:4px;';
-
-//     const targetEntityId = item.targetNumber || '';
-//     const btnView = document.createElement('a');
-//     btnView.classList.add('btnView');
-//     btnView.href   = `https://center.astramaps.ru/map/${targetEntityId}`;
-//     btnView.target = '_blank';
-//     btnView.rel    = 'noopener noreferrer';
-//     btnView.innerHTML = '👁️';
-//     btnView.title  = 'Просмотр в AstraMap';
-//     btnView.style.cssText = 'display:inline-block;padding:4px 8px;background:#2c7da0;color:white;border-radius:4px;font-size:15px;text-decoration:none;margin-bottom:3px;';
-//     btnView.addEventListener('click', e =>
-//       console.log('[btnView]', e.currentTarget.getAttribute('href'))
-//     );
-
-//     const hasMedia = !!_mediaFlags[targetEntityId];
-//     const btnMedia = document.createElement('button');
-//     btnMedia.title    = hasMedia ? 'Фото/видео есть' : 'Нет фото/видео';
-//     btnMedia.innerHTML = '📷';
-//     btnMedia.style.cssText = `display:block;margin:2px auto 0;padding:2px 6px;font-size:13px;
-//       border:none;border-radius:4px;cursor:pointer;
-//       background:${hasMedia ? '#28a745' : '#e9ecef'};
-//       color:${hasMedia ? 'white' : '#aaa'};
-//       opacity:${hasMedia ? '1' : '0.5'};`;
-//     btnMedia.addEventListener('click', () => {
-//       _mediaFlags[targetEntityId] = !_mediaFlags[targetEntityId];
-//       const on = _mediaFlags[targetEntityId];
-//       btnMedia.title            = on ? 'Фото/видео есть' : 'Нет фото/видео';
-//       btnMedia.style.background = on ? '#28a745' : '#e9ecef';
-//       btnMedia.style.color      = on ? 'white'    : '#aaa';
-//       btnMedia.style.opacity    = on ? '1'        : '0.5';
-//     });
-
-//     cellView.appendChild(btnView);
-//     cellView.appendChild(btnMedia);
-
-//     // col 7: Результат
-//     const cellRes = row.insertCell(7);
-//     cellRes.style.cssText = 'padding:3px 4px;vertical-align:middle;';
-//     const selectRes = document.createElement('select');
-//     selectRes.style.cssText = 'width:100%;font-size:11px;padding:2px 4px;border-radius:4px;border:1px solid #ccc;';
-//     const resOpts = [
-//       { val: '',                       txt: '— Результат —', dis: true },
-//       { val: 'вскрыто',                txt: 'Вскрыт' },
-//       { val: 'передано_на_доразведку', txt: 'Передано на доразведку' },
-//       { val: 'подтверждено',           txt: 'Подтверждено' },
-//       { val: 'поражена',               txt: 'Поражена' },
-//       { val: 'не_поражена',            txt: 'Не поражена' },
-//       { val: 'подавлено',              txt: 'Подавлено' },
-//       { val: 'уничтожена',             txt: 'Уничтожена' },
-//     ];
-//     resOpts.forEach(o => {
-//       const opt = document.createElement('option');
-//       opt.value = o.val; opt.textContent = o.txt;
-//       if (o.dis) opt.disabled = true;
-//       if (o.val === item.result) opt.selected = true;
-//       if (o.val === '' && !item.result) opt.selected = true;
-//       selectRes.appendChild(opt);
-//     });
-//     cellRes.appendChild(selectRes);
-
-//     // col 8: Назначить задачу
-//     const cellTask = row.insertCell(8);
-//     cellTask.setAttribute('data-target-id', item.targetNumber || '');
-//     cellTask.classList.add('task-cell');
-//     cellTask.style.cssText = 'text-align:center;vertical-align:middle;padding:4px 6px;';
-//     renderTaskCell(cellTask, item.targetNumber || '', item.characteristic || '', isToday);
-
-//     // col 9: Дата уничтожения
-//     const cellDestroy = row.insertCell(9);
-//     cellDestroy.style.cssText = 'text-align:center;padding:3px 4px;vertical-align:middle;';
-//     const inputDestroy = document.createElement('input');
-//     inputDestroy.type  = 'date';
-//     inputDestroy.value = item.defeatDate || '';
-//     inputDestroy.style.cssText = 'font-size:11px;padding:2px 4px;border-radius:4px;border:1px solid #ccc;max-width:110px;';
-//     cellDestroy.appendChild(inputDestroy);
-
-//     // col 10: Сформировать формуляр
-//     const cellForm = row.insertCell(10);
-//     cellForm.style.cssText = 'text-align:center;padding:4px;vertical-align:middle;';
-//     const btnForm = document.createElement('button');
-//     btnForm.classList.add('btnForm');
-//     btnForm.innerText = 'Сформировать';
-//     btnForm.style.cssText = 'padding:5px 8px;background:#2c7da0;color:white;border:none;border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap;';
-//     btnForm.addEventListener('click', withLock(btnForm, async (e) => {
-//       e.stopPropagation();
-//       const currentRowData = {
-//         targetNumber:   cellNum.innerText.trim(),
-//         characteristic: selectChar.value,
-//         coordX:         cellX.innerText.trim(),
-//         coordY:         cellY.innerText.trim(),
-//         impactTime:     row.getAttribute('data-impact-time') || '',
-//         result:         selectRes.value,
-//         defeatDate:     inputDestroy.value || '',
-//         place:          inputPlace.value || '',
-//       };
-//       await apiSendTarget(currentRowData);
-//     }, { label: '⏳ Отправка...' }));
-//     cellForm.appendChild(btnForm);
-//   });
-// }
-
-
-// ======================== РАБОТА С ТАБЛИЦЕЙ ========================
 function getTableData() {
   const tbody = document.querySelector('#statusTable tbody');
   if (!tbody) return [];
@@ -892,21 +521,47 @@ function getTableData() {
   const data = [];
   rows.forEach((row, idx) => {
     const cells = row.cells;
-    // Новая структура:
+    // Структура:
     // 0: Дата обнаруж.  1: Номер цели  2: Характер  3: Место
     // 4: X  5: Y  6: Просмотр  7: Результат  8: Задача  9: Дата уничт.  10: Формуляр
+
     const targetNumber   = cells[1]?.innerText.trim() || (idx + 1).toString();
     const charSelect     = cells[2]?.querySelector('select');
     const characteristic = charSelect ? charSelect.value : (cells[2]?.innerText.trim() || '');
     const place          = cells[3]?.querySelector('input')?.value || cells[3]?.innerText.trim() || '';
+
+    // X/Y + оригинальные WGS84 координаты из data-атрибутов
     const coordX         = cells[4]?.innerText.trim() || '';
     const coordY         = cells[5]?.innerText.trim() || '';
+    const originalLon    = parseFloat(cells[4]?.getAttribute('data-lon') || '') || null;
+    const originalLat    = parseFloat(cells[5]?.getAttribute('data-lat') || '') || null;
+
     const resSelect      = cells[7]?.querySelector('select');
     const result         = resSelect ? resSelect.value : '';
+
+    // Дата уничтожения из col 9
     const destroyDate    = cells[9]?.querySelector('input')?.value || cells[9]?.innerText.trim() || '';
+
+    // Время обнаружения из data-атрибута строки
     const impactTime     = row.getAttribute('data-impact-time') || '';
-    data.push({ targetNumber, characteristic, coordX, coordY, impactTime, result,
-                defeatDate: destroyDate, place });
+
+    // Полная строка даты из col 0 (для чтения)
+    const dateObserved   = cells[0]?.innerText.trim().replace(/\n/g, ' ') || '';
+
+    data.push({
+      targetNumber,
+      characteristic,
+      place,
+      coordX,
+      coordY,
+      originalLon,
+      originalLat,
+      impactTime,
+      result,
+      defeatDate:   destroyDate,
+      destroyDate,
+      dateObserved,
+    });
   });
   return data;
 }
@@ -982,11 +637,13 @@ function buildCharSelect(currentVal) {
 const _mediaFlags = {};
 
 function populateTable(dataArray) {
+  console.log('[populateTable] Получено данных для таблицы:', dataArray);
   const tbody = document.querySelector('#statusTable tbody');
   if (!tbody) return;
   tbody.innerHTML = '';
 
   const rows = deduplicateById(dataArray, 'targetNumber');
+  console.log(`[populateTable] Дедупликация: ${dataArray.length} → ${rows.length} строк для отображения`, rows);
   if (rows.length < dataArray.length) {
     console.warn(`[table] Убрано дублей: ${dataArray.length - rows.length}`);
   }
@@ -1031,7 +688,7 @@ function populateTable(dataArray) {
     const inputPlace = document.createElement('input');
     inputPlace.type  = 'text';
     inputPlace.value = item.place || '';
-    inputPlace.placeholder = 'Место';
+    inputPlace.placeholder = 'Адрес цели';
     inputPlace.style.cssText = 'width:100%;font-size:11px;padding:3px 6px;border-radius:4px;border:1px solid #ccc;max-width:90px;box-sizing:border-box;';
     cellPlace.appendChild(inputPlace);
 
@@ -1151,157 +808,147 @@ function populateTable(dataArray) {
   });
 }
 
-
 // ✅ FIX: убран параметр coordinates (теперь каждая строка содержит свои originalLon/Lat)
-function populateTable(dataArray) {
-  const tbody = document.querySelector('#statusTable tbody');
-  if (!tbody) return;
-  tbody.innerHTML = '';
-  // Дедупликация по targetNumber — защита от двойной загрузки
-  const rows = deduplicateById(dataArray, 'targetNumber');
-  if (rows.length < dataArray.length) {
-    console.warn(`[table] Убрано дублей: ${dataArray.length - rows.length}`);
-  }
+// function populateTable(dataArray) {
+//   const tbody = document.querySelector('#statusTable tbody');
+//   if (!tbody) return;
+//   tbody.innerHTML = '';
+//   // Дедупликация по targetNumber — защита от двойной загрузки
+//   const rows = deduplicateById(dataArray, 'targetNumber');
+//   if (rows.length < dataArray.length) {
+//     console.warn(`[table] Убрано дублей: ${dataArray.length - rows.length}`);
+//   }
 
-  rows.forEach((item, idx) => {
-    const row = tbody.insertRow();
+//   rows.forEach((item, idx) => {
+//     const row = tbody.insertRow();
 
-    // Выделяем поражённые цели оранжевым фоном
-    const DEFEATED_RESULTS = ['поражена', 'подтверждено', 'подавлено'];
-    if (DEFEATED_RESULTS.includes(item.result)) {
-      row.style.background = 'rgba(255, 140, 0, 0.15)';
-      row.style.borderLeft = '3px solid #fd7e14';
-    }
+//     // Выделяем поражённые цели оранжевым фоном
+//     const DEFEATED_RESULTS = ['поражена', 'подтверждено', 'подавлено'];
+//     if (DEFEATED_RESULTS.includes(item.result)) {
+//       row.style.background = 'rgba(255, 140, 0, 0.15)';
+//       row.style.borderLeft = '3px solid #fd7e14';
+//     }
 
-    const cellNum = row.insertCell(0);
-    cellNum.innerText = item.targetNumber || (idx + 1).toString();
+//     const cellNum = row.insertCell(0);
+//     cellNum.innerText = item.targetNumber || (idx + 1).toString();
 
-    const cellChar = row.insertCell(1);
-    const selectChar = document.createElement('select');
-    const categories = ['ПУ', 'ПУ БПЛА', 'Точка влета', 'РЛС', 'РЭБ', 'ЗРК', 'Укрытие', 'Связь', 'Танк', 'БМП', 'ББМ', 'Склад', 'КНП'];
-    const defaultOpt = document.createElement('option');
-    defaultOpt.value = '';
-    defaultOpt.textContent = 'Категория';
-    defaultOpt.disabled = true;
-    defaultOpt.selected = true;
-    selectChar.appendChild(defaultOpt);
-    categories.forEach(cat => {
-      const opt = document.createElement('option');
-      opt.value = cat;
-      opt.textContent = cat;
-      if (item.characteristic === cat) opt.selected = true;
-      selectChar.appendChild(opt);
-    });
-    cellChar.appendChild(selectChar);
+//     const cellChar = row.insertCell(1);
+//     const selectChar = document.createElement('select');
+//     const categories = ['ПУ', 'ПУ БПЛА', 'Точка влета', 'РЛС', 'РЭБ', 'ЗРК', 'Укрытие', 'Связь', 'Танк', 'БМП', 'ББМ', 'Склад', 'КНП'];
+//     const defaultOpt = document.createElement('option');
+//     defaultOpt.value = '';
+//     defaultOpt.textContent = 'Категория';
+//     defaultOpt.disabled = true;
+//     defaultOpt.selected = true;
+//     selectChar.appendChild(defaultOpt);
+//     categories.forEach(cat => {
+//       const opt = document.createElement('option');
+//       opt.value = cat;
+//       opt.textContent = cat;
+//       if (item.characteristic === cat) opt.selected = true;
+//       selectChar.appendChild(opt);
+//     });
+//     cellChar.appendChild(selectChar);
 
-    const cellX = row.insertCell(2);
-    cellX.innerText = item.coordX || '';
-    cellX.setAttribute('contenteditable', 'true');
-    cellX.setAttribute('cellX', item.originalLon ?? '');  // lon для обратной конвертации
-    cellX.classList.add('editable');
+//     const cellX = row.insertCell(2);
+//     cellX.innerText = item.coordX || '';
+//     cellX.setAttribute('contenteditable', 'true');
+//     cellX.setAttribute('cellX', item.originalLon ?? '');  // lon для обратной конвертации
+//     cellX.classList.add('editable');
 
-    const cellY = row.insertCell(3);
-    cellY.innerText = item.coordY || '';
-    cellY.setAttribute('contenteditable', 'true');
-    cellY.setAttribute('cellY', item.originalLat ?? '');  // lat для обратной конвертации
-    cellY.classList.add('editable');
+//     const cellY = row.insertCell(3);
+//     cellY.innerText = item.coordY || '';
+//     cellY.setAttribute('contenteditable', 'true');
+//     cellY.setAttribute('cellY', item.originalLat ?? '');  // lat для обратной конвертации
+//     cellY.classList.add('editable');
 
-    const cellTime = row.insertCell(4);
-    cellTime.innerText = item.impactTime || '';
-    cellTime.setAttribute('contenteditable', 'true');
-    cellTime.classList.add('editable');
+//     const cellTime = row.insertCell(4);
+//     cellTime.innerText = item.impactTime || '';
+//     cellTime.setAttribute('contenteditable', 'true');
+//     cellTime.classList.add('editable');
 
-    const cellRes = row.insertCell(5);
-    const selectRes = document.createElement('select');
-    const defaultRes = document.createElement('option');
-    defaultRes.value = '';
-    defaultRes.textContent = 'Результат';
-    defaultRes.disabled = true;
-    defaultRes.selected = true;
-    selectRes.appendChild(defaultRes);
-    const resOpts = [
-      { val: 'поражена', txt: 'Поражена' },
-      { val: 'не_поражена', txt: 'Не поражена' },
-      { val: 'вскрыто', txt: 'Вскрыто' },
-      { val: 'передано_на_доразведку', txt: 'Передано на доразведку' },
-      { val: 'подтверждено', txt: 'Подтверждено' },
-      { val: 'принято_на_доразведку', txt: 'Принято на доразведку' },
-    ];
-    resOpts.forEach(opt => {
-      const option = document.createElement('option');
-      option.value = opt.val;
-      option.textContent = opt.txt;
-      if (item.result === opt.val) option.selected = true;
-      selectRes.appendChild(option);
-    });
-    cellRes.appendChild(selectRes);
+//     const cellRes = row.insertCell(5);
+//     const selectRes = document.createElement('select');
+//     const defaultRes = document.createElement('option');
+//     defaultRes.value = '';
+//     defaultRes.textContent = 'Результат';
+//     defaultRes.disabled = true;
+//     defaultRes.selected = true;
+//     selectRes.appendChild(defaultRes);
+//     const resOpts = [
+//       { val: 'поражена', txt: 'Поражена' },
+//       { val: 'не_поражена', txt: 'Не поражена' },
+//       { val: 'вскрыто', txt: 'Вскрыто' },
+//       { val: 'передано_на_доразведку', txt: 'Передано на доразведку' },
+//       { val: 'подтверждено', txt: 'Подтверждено' },
+//       { val: 'принято_на_доразведку', txt: 'Принято на доразведку' },
+//     ];
+//     resOpts.forEach(opt => {
+//       const option = document.createElement('option');
+//       option.value = opt.val;
+//       option.textContent = opt.txt;
+//       if (item.result === opt.val) option.selected = true;
+//       selectRes.appendChild(option);
+//     });
+//     cellRes.appendChild(selectRes);
 
-    const cellDate = row.insertCell(6);
-    cellDate.innerText = item.defeatDate || '';
-    cellDate.classList.add('date-cell');
+//     const cellDate = row.insertCell(6);
+//     cellDate.innerText = item.defeatDate || '';
+//     cellDate.classList.add('date-cell');
 
-    const cellView = row.insertCell(7);
-    const btnView = document.createElement('a');
-    btnView.classList.add("btnView");
-    // ID объекта вставляется прямо в путь URL — приложение само перейдёт к нужной цели
-    const targetEntityId = item.targetNumber || '';
-    btnView.href = `https://center.astramaps.ru/map/${targetEntityId}`;
-    btnView.setAttribute('data-entity-id', targetEntityId);
-    btnView.target = '_blank';       // открываем в новой вкладке — текущая остаётся
-    btnView.rel = 'noopener noreferrer';
-    btnView.innerHTML = '👁️';
-    btnView.title = 'Просмотр в AstraM (откроется в новой вкладке)';
-    btnView.style.cssText = 'display:inline-block; padding: 5px 10px; background: #2c7da0; color: white; border-radius: 4px; cursor: pointer; font-size: 18px; text-decoration: none;';
+//     const cellView = row.insertCell(7);
+//     const btnView = document.createElement('a');
+//     btnView.classList.add("btnView");
+//     // ID объекта вставляется прямо в путь URL — приложение само перейдёт к нужной цели
+//     const targetEntityId = item.targetNumber || '';
+//     btnView.href = `https://center.astramaps.ru/map/${targetEntityId}`;
+//     btnView.setAttribute('data-entity-id', targetEntityId);
+//     btnView.target = '_blank';       // открываем в новой вкладке — текущая остаётся
+//     btnView.rel = 'noopener noreferrer';
+//     btnView.innerHTML = '👁️';
+//     btnView.title = 'Просмотр в AstraM (откроется в новой вкладке)';
+//     btnView.style.cssText = 'display:inline-block; padding: 5px 10px; background: #2c7da0; color: white; border-radius: 4px; cursor: pointer; font-size: 18px; text-decoration: none;';
 
-    const cellTask = row.insertCell(8);
-    cellTask.setAttribute('data-target-id', item.targetNumber || '');
-    cellTask.style.cssText = 'text-align:center; vertical-align:middle; padding:4px 6px;';
+//     const cellTask = row.insertCell(8);
+//     cellTask.setAttribute('data-target-id', item.targetNumber || '');
+//     cellTask.style.cssText = 'text-align:center; vertical-align:middle; padding:4px 6px;';
 
-    // Рендерим содержимое ячейки задачи
-    // Кнопка задачи активна только если открыт сегодняшний день
-    // или дата не выбрана (кнопка Сегодня)
-    const today   = getMoscowDateStr();
-    const isToday = activeFolderDate === today || activeFolderDate === null;
-    renderTaskCell(cellTask, item.targetNumber || '', item.characteristic || '', isToday);
+//     // Рендерим содержимое ячейки задачи
+//     // Кнопка задачи активна только если открыт сегодняшний день
+//     // или дата не выбрана (кнопка Сегодня)
+//     const today   = getMoscowDateStr();
+//     const isToday = activeFolderDate === today || activeFolderDate === null;
+//     renderTaskCell(cellTask, item.targetNumber || '', item.characteristic || '', isToday);
 
-    // Обработчик не нужен — браузер сам открывает target="_blank" в новой вкладке.
-    // Логируем клик для отладки.
-    btnView.addEventListener('click', (e) => {
-      const entityId = e.currentTarget.getAttribute('data-entity-id');
-      console.log('[btnView] Открываем объект', entityId, '→', e.currentTarget.href);
-    });
-    cellView.appendChild(btnView);
+//     // Обработчик не нужен — браузер сам открывает target="_blank" в новой вкладке.
+//     // Логируем клик для отладки.
+//     btnView.addEventListener('click', (e) => {
+//       const entityId = e.currentTarget.getAttribute('data-entity-id');
+//       console.log('[btnView] Открываем объект', entityId, '→', e.currentTarget.href);
+//     });
+//     cellView.appendChild(btnView);
 
-    const cellForm = row.insertCell(9);
-    const btnForm = document.createElement('button');
-    btnForm.classList.add("btnForm");
-    btnForm.innerText = 'Сформировать';
-    btnForm.style.cssText = 'padding: 5px 10px; background: #2c7da0; color: white; border: none; border-radius: 4px; cursor: pointer;';
-    btnForm.addEventListener('click', withLock(btnForm, async (e) => {
-      e.stopPropagation();
-      const currentRowData = {
-        targetNumber:   cellNum.innerText.trim(),
-        characteristic: selectChar.value,
-        coordX:         cellX.innerText.trim(),
-        coordY:         cellY.innerText.trim(),
-        impactTime:     cellTime.innerText.trim(),
-        result:         selectRes.value,
-        defeatDate:     cellDate.innerText.trim()
-      };
-      await apiSendTarget(currentRowData);
-    }, { label: '⏳ Отправка...' }));
-    cellForm.appendChild(btnForm);
-  });
-}
-
-// ======================== СОЗДАНИЕ ПОПАПА ========================
-// function createPopup() { → content/ui/panel.js
-
-// ======================== КНОПКА ЗАКРЫТИЯ ========================
-// function closeBtn() { → content/ui/panel.js
-
-// ======================== ДОБАВЛЕНИЕ КНОПКИ НА КАРТУ ========================
-// function findAndAddButton() { → content/ui/panel.js
+//     const cellForm = row.insertCell(9);
+//     const btnForm = document.createElement('button');
+//     btnForm.classList.add("btnForm");
+//     btnForm.innerText = 'Сформировать';
+//     btnForm.style.cssText = 'padding: 5px 10px; background: #2c7da0; color: white; border: none; border-radius: 4px; cursor: pointer;';
+//     btnForm.addEventListener('click', withLock(btnForm, async (e) => {
+//       e.stopPropagation();
+//       const currentRowData = {
+//         targetNumber:   cellNum.innerText.trim(),
+//         characteristic: selectChar.value,
+//         coordX:         cellX.innerText.trim(),
+//         coordY:         cellY.innerText.trim(),
+//         impactTime:     cellTime.innerText.trim(),
+//         result:         selectRes.value,
+//         defeatDate:     cellDate.innerText.trim()
+//       };
+//       await apiSendTarget(currentRowData);
+//     }, { label: '⏳ Отправка...' }));
+//     cellForm.appendChild(btnForm);
+//   });
+// }
 
 // ======================== ИНТЕРВАЛЫ ========================
 let attemptsClose = 0;
@@ -1317,19 +964,6 @@ const intervalAdd = setInterval(() => {
   attemptsAdd++;
   if (attemptsAdd > 20) clearInterval(intervalAdd);
 }, 1000);
-
-// ======================== ОСНОВНАЯ ЛОГИКА ========================
-// function ContenNew() { → content/ui/panel.js
-
-// Обновить кнопку «+ Добавить цель»
-// function updateAddTargetBtn() { → content/ui/panel.js
-
-// ── Найти или создать папку "спланировано на DD.MM.YY г." ──────────────────
-// async function findOrCreatePlanFolder(parentFolder → content/api/astraApi.js
-
-// ── Переместить объект в папку (изменить parentEntityID) ─────────────────────
-// async function moveEntityToFolder(entityId, newPar → content/api/astraApi.js
-
 // ── Спланировать цель на дату ─────────────────────────────────────────────────
 // Находит папку дня → находит/создаёт подпапку "спланировано на..." →
 // перемещает объект → уведомляет всех
@@ -1659,10 +1293,6 @@ const MONTH_MAP = {
   'июля':7,'августа':8,'сентября':9,'октября':10,'ноября':11,'декабря':12
 };
 
-// function parseFolderDate(title) { → content/api/astraApi.js
-
-// Получить список дат из папок (с кэшем в localStorage)
-// Парсим название папки-месяца в номер месяца и год
 // Форматы: "Май 2026 г.", "май 2026г.", "05.2026 г.", "2026-05"
 // function parseMonthFolder(title) { → content/api/astraApi.js
 
@@ -1768,7 +1398,6 @@ async function loadDateFolders(forceRefresh = false) {
   }
 }
 
-// Загрузить объекты из папки(ок) даты (с кэшем)
 // folderIds — массив всех папок этой даты (могут быть в разных ветках дерева)
 async function loadTargetsFromFolder(folderIds, dateKey, forceRefresh = false) {
   const cacheKey = CACHE_KEY_PREFIX + dateKey;

@@ -67,7 +67,7 @@ function appendPlanRowToTable(plan) {
     // 8: Задача (создал кто)
     plan.created_by || '',
     // 9: Дата уничтожения
-    data.defeatDate || '',
+    data.defeatDate || '', 
     // 10: Формуляр — кнопка удалить
     '',
   ];
