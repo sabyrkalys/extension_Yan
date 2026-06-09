@@ -8,8 +8,9 @@ function updatePlanDateInPlanning(plan) {
   const timeStr   = plan.created_at ? new Date(plan.created_at).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}) : '';
   const dateLabel = timeStr ? `${dateShort} ${timeStr}` : dateShort;
   const row = document.querySelector(`tr[data-target-id="${plan.target_id}"]`);
-  if (row && row.cells[5]) {
-    row.cells[5].innerHTML = `<span style="color:#2563eb;font-weight:600;font-size:12px;">${dateLabel}</span>`;
+  // col 7 = Результат в новой структуре
+  if (row && row.cells[7]) {
+    row.cells[7].innerHTML = `<span style="color:#2563eb;font-weight:600;font-size:12px;">${dateLabel}</span>`;
   }
 }
 
@@ -19,13 +20,16 @@ function loadPlansForDate(date) {
 }
 
 // Добавить строку плана в таблицу (черновик — синяя рамка)
+// Новая структура колонок:
+// 0: Дата обнаруж.  1: Номер цели  2: Характер  3: Место
+// 4: X  5: Y  6: Просмотр  7: Результат  8: Задача  9: Дата уничт.  10: Формуляр
 function appendPlanRowToTable(plan) {
   const tbody = document.querySelector('#statusTable tbody');
   if (!tbody) return;
 
   if (tbody.querySelector(`[data-plan-id="${plan.id}"]`)) return;
   for (const row of tbody.querySelectorAll('tr:not([data-plan-id])')) {
-    if (row.cells[0]?.textContent?.trim() === String(plan.target_id)) return;
+    if (row.cells[1]?.textContent?.trim() === String(plan.target_id)) return;
   }
 
   let data = {};
@@ -38,20 +42,33 @@ function appendPlanRowToTable(plan) {
 
   const row = tbody.insertRow(0);
   row.setAttribute('data-plan-id', plan.id);
+  row.setAttribute('data-target-id', String(plan.target_id));
   row.style.background = 'rgba(37,99,235,0.08)';
   row.style.borderLeft = '3px solid #2563eb';
 
   const cols = [
-    data.targetNumber || plan.target_id,
+    // 0: Дата обнаруж.
+    `<span style="font-size:11px;">${dateShort}</span>`,
+    // 1: Номер цели
+    String(data.targetNumber || plan.target_id),
+    // 2: Характер
     data.characteristic || '',
+    // 3: Место
+    '',
+    // 4: X
     data.coordX || '',
+    // 5: Y
     data.coordY || '',
-    data.impactTime || '',
-    `<span style="background:#e0e7ff;color:#2563eb;padding:2px 8px;border-radius:8px;font-size:11px;">📅 план на ${dateLabel}</span>`,
-    data.defeatDate || '',
+    // 6: Просмотр
     `<a href="https://center.astramaps.ru/map/${plan.target_id}" target="_blank" rel="noopener noreferrer"
        style="display:inline-block;padding:4px 8px;background:#2c7da0;color:white;border-radius:4px;font-size:12px;text-decoration:none;">👁️</a>`,
+    // 7: Результат — пометка "план"
+    `<span style="background:#e0e7ff;color:#2563eb;padding:2px 8px;border-radius:8px;font-size:11px;">📅 план на ${dateLabel}</span>`,
+    // 8: Задача (создал кто)
     plan.created_by || '',
+    // 9: Дата уничтожения
+    data.defeatDate || '',
+    // 10: Формуляр — кнопка удалить
     '',
   ];
 
@@ -65,14 +82,14 @@ function appendPlanRowToTable(plan) {
   delBtn.textContent = '✕';
   delBtn.style.cssText = 'padding:3px 8px;background:#dc3545;color:white;border:none;border-radius:4px;cursor:pointer;font-size:11px;';
   delBtn.addEventListener('click', () => wsSend({ type: 'DELETE_PLAN', planId: plan.id }));
-  row.cells[9].appendChild(delBtn);
+  row.cells[10].appendChild(delBtn);
 }
 
 // Заблокировать кнопки задач для прошедших дат
 function disableTaskButtonsIfPast() {
   const today = getMoscowDateStr();
   if (!activeFolderDate || activeFolderDate >= today) return;
-  document.querySelectorAll('#statusTable td[data-target-id] button').forEach(btn => {
+  document.querySelectorAll('#statusTable .task-cell button').forEach(btn => {
     btn.disabled = true;
     btn.style.opacity = '0.35';
     btn.style.cursor  = 'not-allowed';

@@ -15,7 +15,7 @@ const STATUS_COLORS = {
   'уничтожена':   '#dc3545',
 };
 
-// Только уничтожена блокирует кнопки — цель всегда остаётся в таблице
+// Только уничтожена блокирует кнопки
 const FINAL_STATUSES = ['уничтожена'];
 
 // ── Ячейка задачи в таблице целей ────────────────────────────────────────────
@@ -24,16 +24,13 @@ function renderTaskCell(cell, targetId, targetTitle, canAssign = true) {
   const task = tasksByTarget[targetId] || null;
   cell.innerHTML = '';
 
-  // Статусы после которых можно ставить новую задачу
   const CLOSED_STATUSES = [
     'уничтожена', 'поражена', 'подтверждено',
     'подавлено', 'отклонена', 'не поражена'
   ];
-
   const taskClosed = task && CLOSED_STATUSES.includes(task.status);
 
   if (task && !taskClosed) {
-    // Активная задача — показываем статус
     const color  = STATUS_COLORS[task.status] || '#888';
     const toRole = task.to_role || task.to || '?';
     const toOff  = task.to_office
@@ -47,11 +44,8 @@ function renderTaskCell(cell, targetId, targetTitle, canAssign = true) {
     `;
     cell.appendChild(wrap);
   } else if (canAssign) {
-    // Нет задачи или задача закрыта — показываем кнопку новой задачи
     const wrap = document.createElement('div');
     wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:4px;';
-
-    // Если была предыдущая задача — показываем её финальный статус маленьким
     if (task && taskClosed) {
       const color = STATUS_COLORS[task.status] || '#888';
       wrap.innerHTML = `
@@ -59,7 +53,6 @@ function renderTaskCell(cell, targetId, targetTitle, canAssign = true) {
                      font-size:10px;opacity:0.7;margin-bottom:2px;">${task.status}</span>
       `;
     }
-
     const btn = document.createElement('button');
     btn.style.cssText = 'padding:4px 10px;background:#fd7e14;color:white;border:none;' +
                         'border-radius:5px;cursor:pointer;font-size:12px;white-space:nowrap;';
@@ -72,12 +65,11 @@ function renderTaskCell(cell, targetId, targetTitle, canAssign = true) {
   }
 }
 
-// Обновить tasksByTarget в store — вызывается при загрузке истории
+// Обновить tasksByTarget в store
 function _updateTasksByTarget(task) {
   const tid = task?.target_id || task?.targetId;
   if (!tid) return;
   const tasksByTarget = store.get('tasksByTarget');
-  // Берём задачу с наибольшим id (самую свежую)
   if (!tasksByTarget[tid] || task.id >= tasksByTarget[tid].id) {
     tasksByTarget[tid] = task;
   }
@@ -93,8 +85,9 @@ function openNewTaskModal(targetId, targetTitle) {
   if (targetSelect) {
     targetSelect.innerHTML = '<option value="">— без привязки к цели —</option>';
     document.querySelectorAll('#statusTable tbody tr').forEach(row => {
-      const id    = row.cells[0]?.innerText.trim();
-      const title = row.cells[1]?.querySelector('select')?.value || '';
+      // Новая структура: col 1 = Номер цели, col 2 = Характер (через .char-cell)
+      const id    = row.cells[1]?.innerText.trim();
+      const title = row.querySelector('.char-cell select')?.value || '';
       const opt   = document.createElement('option');
       opt.value   = id;
       opt.textContent = `#${id} ${title}`;
@@ -265,7 +258,6 @@ function addTaskToPanel(task) {
   if (!task.to   && task.to_role)   task.to   = task.to_role;
   const row = renderTaskRow(task);
 
-  // Вставляем в правильную позицию по дате (свежие сверху)
   const rows = tbody.querySelectorAll('tr');
   const taskTime = new Date(task.created_at || 0).getTime();
   let inserted = false;
@@ -296,7 +288,6 @@ function updateTaskInPanel(task) {
   else addTaskToPanel(task);
 }
 
-// Кэш задач по id для быстрой сортировки
 const _tasksCache = {};
 
 function _getTaskById(taskId) {
@@ -319,7 +310,6 @@ function updateTaskRowEl(tr, task) {
   _cacheTask(task);
   const color = STATUS_COLORS[task.status] || '#888';
 
-  // Подразделение отправителя и получателя
   const fromOffice = task.from_office
     ? ` [${OFFICES[task.from_office]?.short || task.from_office}]` : '';
   const toOffice   = task.to_office
@@ -328,21 +318,18 @@ function updateTaskRowEl(tr, task) {
   const fromRole = (task.from_role || task.from || '?') + fromOffice;
   const toRole   = (task.to_role   || task.to   || '?') + toOffice;
 
-  // isMyTask — проверяем и роль и подразделение
   const myOfficeId     = store.get('myOfficeId') || 'HQ';
   const toRole_check   = task.to_role || task.to || '';
   const toOffice_check = task.to_office || '';
 
   const isMyTask = toRole_check === myRole && (
-    toOffice_check === '' ? true :      // старые задачи без офиса — по роли
-    toOffice_check === myOfficeId       // новые задачи — роль + офис
+    toOffice_check === '' ? true :
+    toOffice_check === myOfficeId
   );
 
-  // Дополнительная защита — отправитель не видит кнопки ответа
   const isMyOutgoing = (task.from_role === myRole || task.from === myRole)
                      && (task.from_office || 'HQ') === myOfficeId;
 
-  // canAct = false только если статус уничтожена
   const canAct = isMyTask && !isMyOutgoing && !FINAL_STATUSES.includes(task.status);
 
   const dateStr = task.created_at || task.createdAt || '';
@@ -403,7 +390,6 @@ function updateTaskRowEl(tr, task) {
     });
     actionTd.appendChild(sel);
   } else {
-    // Задача уничтожена или не наша — показываем финальный статус без кнопок
     const label = FINAL_STATUSES.includes(task.status)
       ? `<span style="font-size:11px;color:#dc3545;font-weight:600;">🔥 ${task.status}</span>`
       : `<span style="font-size:11px;color:#888;">—</span>`;
@@ -411,11 +397,12 @@ function updateTaskRowEl(tr, task) {
   }
 }
 
-// ── Обновление ячеек задач в таблице целей ────────────────────────────────────
+// ── Обновление ячеек задач — НОВАЯ СТРУКТУРА ТАБЛИЦЫ ─────────────────────────
+// data-target-id стоит на TR, характеристика — в .char-cell
 function refreshAllTaskCells() {
   document.querySelectorAll('#statusTable tbody tr').forEach(row => {
-    const targetId    = row.dataset.targetId;
-    const targetTitle = row.cells[1]?.querySelector('select')?.value || '';
+    const targetId    = row.getAttribute('data-target-id') || row.dataset.targetId;
+    const targetTitle = row.querySelector('.char-cell select')?.value || '';
     const taskCell    = row.querySelector('.task-cell');
     if (taskCell && targetId) renderTaskCell(taskCell, targetId, targetTitle, false);
   });
@@ -429,7 +416,7 @@ function refreshTaskCellByTargetId(task) {
   const row = document.querySelector(`#statusTable tr[data-target-id="${tid}"]`);
   if (!row) return;
   const cell  = row.querySelector('.task-cell');
-  const title = row.cells[1]?.querySelector('select')?.value || '';
+  const title = row.querySelector('.char-cell select')?.value || '';
   if (cell) renderTaskCell(cell, tid, title, false);
 }
 
