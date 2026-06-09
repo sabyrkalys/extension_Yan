@@ -24,7 +24,7 @@ function createPopup() {
     font-family: system-ui, sans-serif;
   ">
     <style>
-      #statusTable { width: 100%; min-width:600px; border-collapse: collapse; font-size: 12px; }
+      #statusTable { width: 100%; min-width:1000px; border-collapse: collapse; font-size: 12px; }
       #statusTable th, #statusTable td { padding: 10px 8px; border: 1px solid #d0d7de; text-align: center; vertical-align: middle; }
       #statusTable th:nth-child(2), #statusTable td:nth-child(2) { width: 110px; min-width: 85px; max-width: 180px; }
       .editable { background: #fff9e6; min-height: 44px; }
@@ -101,19 +101,20 @@ function createPopup() {
     <div class="table-wrapper" style="flex: 1; overflow-y: auto; padding: 12px; background: #f5f7fa; color: black;">
       <table id="statusTable">
         <thead>
-          <tr>
-            <th rowspan="2">Номер цели</th>
-            <th rowspan="2">Характеристика цели</th>
-            <th colspan="2">Координаты</th>
-            <th rowspan="2">Время обнаружения</th>
-            <th rowspan="2">Результат</th>
-            <th rowspan="2">Дата обнаружения</th>
-            <th rowspan="2">Просмотр в AstraM</th>
-            <th rowspan="2">Назначить задачу</th>
-            <th rowspan="2">Сформировать формуляр</th>
-          </tr>
-          <tr><th>Х</th><th>У</th></tr>
-        </thead>
+  <tr>
+    <th rowspan="2" style="min-width:70px;">Дата обнаруж.</th>
+    <th rowspan="2">Номер цели</th>
+    <th rowspan="2" style="min-width:130px;">Характер цели</th>
+    <th rowspan="2" style="min-width:80px;">Место</th>
+    <th colspan="2">Координаты</th>
+    <th rowspan="2">Просмотр на карте</th>
+    <th rowspan="2" style="min-width:120px;">Результат</th>
+    <th rowspan="2" style="min-width:120px;">Назначить задачу</th>
+    <th rowspan="2" style="min-width:80px;">Дата уничтожения</th>
+    <th rowspan="2">Сформировать формуляр</th>
+  </tr>
+  <tr><th>X</th><th>Y</th></tr>
+</thead>
         <tbody></tbody>
       </table>
     </div>
