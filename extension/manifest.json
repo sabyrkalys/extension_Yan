@@ -12,7 +12,8 @@
     "alarms"
   ],
   "host_permissions": [
-    "https://center.astramaps.ru/*"
+    "https://center.astramaps.ru/*",
+    "http://186.246.2.6:5001/*"
   ],
   "background": {
     "service_worker": "background.js"
