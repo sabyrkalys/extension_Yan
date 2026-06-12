@@ -725,30 +725,40 @@ function populateTable(dataArray) {
     const hasPhoto = !!_mediaFlags[targetEntityId + '_photo'];
     const hasVideo = !!_mediaFlags[targetEntityId + '_video'];
 
-    const makeMediaBtn = (type, emoji, flagKey) => {
+    const makeMediaBtn = (type, emoji, flagKey, mediaType) => {
       const btn = document.createElement('button');
       const on  = !!_mediaFlags[flagKey];
-      btn.innerHTML = emoji;
-      btn.title     = on ? `${type} загружено` : `${type} нет`;
+      btn.innerHTML     = emoji;
+      btn.title         = on ? `${type} загружено` : `${type} нет`;
+      btn.dataset.media = mediaType; // 'photo' или 'video' — для wsHandlers
       btn.style.cssText = `font-size:10px;padding:1px 4px;border:none;border-radius:3px;cursor:pointer;
         background:${on ? '#28a745' : '#dee2e6'};
         color:${on ? 'white' : '#aaa'};
         opacity:${on ? '1' : '0.6'};`;
       btn.addEventListener('click', () => {
-        _mediaFlags[flagKey] = !_mediaFlags[flagKey];
-        const nowOn = _mediaFlags[flagKey];
+        const nowOn = !_mediaFlags[flagKey];
+        _mediaFlags[flagKey] = nowOn;
         btn.title            = nowOn ? `${type} загружено` : `${type} нет`;
         btn.style.background = nowOn ? '#28a745' : '#dee2e6';
         btn.style.color      = nowOn ? 'white'    : '#aaa';
         btn.style.opacity    = nowOn ? '1'        : '0.6';
+        // Сохраняем в SQLite через WS
+        const isPhoto = mediaType === 'photo';
+        wsSend({
+          type:      'UPDATE_TARGET_LOCAL',
+          entity_id: targetEntityId,
+          has_photo: isPhoto  ? (nowOn ? 1 : 0) : undefined,
+          has_video: !isPhoto ? (nowOn ? 1 : 0) : undefined,
+        });
       });
       return btn;
     };
 
     const mediaWrap = document.createElement('div');
+    mediaWrap.classList.add('media-btns'); // класс для поиска в wsHandlers
     mediaWrap.style.cssText = 'display:flex;gap:3px;justify-content:center;margin-top:3px;';
-    mediaWrap.appendChild(makeMediaBtn('Фото', '📷', targetEntityId + '_photo'));
-    mediaWrap.appendChild(makeMediaBtn('Видео', '🎥', targetEntityId + '_video'));
+    mediaWrap.appendChild(makeMediaBtn('Фото',  '📷', targetEntityId + '_photo', 'photo'));
+    mediaWrap.appendChild(makeMediaBtn('Видео', '🎥', targetEntityId + '_video', 'video'));
 
     cellView.appendChild(btnView);
     cellView.appendChild(mediaWrap);
@@ -1386,16 +1396,33 @@ async function loadTargetsFromFolder(folderIds, dateKey, forceRefresh = false) {
 
     const characteristic = TARGET_TYPE_MAP[params['6']?.value] || '';
 
+    // ── Новые поля из AstraMap ────────────────────────────────────────
+    const source      = params['9']?.value  || '';
+    const description = params['4']?.value  || '';
+    const confidence  = params['10']?.value || '';
+    const relevance   = params['11']?.value || '';
+    const priority    = params['17']?.value || '';
+    const is_mobile   = params['14']?.value === 1;
+    const has_media   = Array.isArray(params['8']?.value) && params['8'].value.length > 0;
+
     return {
       targetNumber: e.id || '',
       characteristic,
       coordX: conv.y,
       coordY: conv.x,
       originalLon: lon,
-      originalLat: lat, 
+      originalLat: lat,
       impactTime,
       result,
       defeatDate,
+      // Поля для синка в SQLite
+      source,
+      description,
+      confidence,
+      relevance,
+      priority,
+      is_mobile,
+      has_media,
     };
   });
 
@@ -1403,9 +1430,35 @@ async function loadTargetsFromFolder(folderIds, dateKey, forceRefresh = false) {
   tableRows.sort((a, b) => {
     const ta = a.impactTime || '';
     const tb = b.impactTime || '';
-    // Сравниваем как строки HH:MM — работает корректно (лексикографически)
     return tb.localeCompare(ta);
   });
+
+  // Синкаем в SQLite через WS (фоново, не блокирует UI)
+  if (tableRows.length > 0 && myRole) {
+    const syncPayload = tableRows.map(row => ({
+      entity_id:   String(row.targetNumber),
+      title:       row.characteristic,
+      target_type: row.characteristic,
+      coord_lon:   row.originalLon,
+      coord_lat:   row.originalLat,
+      coord_x:     row.coordX,
+      coord_y:     row.coordY,
+      result:      row.result,
+      detected_at: row.defeatDate
+        ? `${row.defeatDate}T${row.impactTime ? row.impactTime + ':00' : '00:00:00'}Z`
+        : '',
+      source:      row.source      || '',
+      description: row.description || '',
+      confidence:  row.confidence  || '',
+      relevance:   row.relevance   || '',
+      priority:    row.priority    || '',
+      is_mobile:   row.is_mobile   || false,
+      has_media:   row.has_media   || false,
+      author:      '',
+    }));
+    wsSend({ type: 'SYNC_TARGETS', date: dateKey, entities: syncPayload });
+    console.log(`[sync] Отправлено ${syncPayload.length} целей за ${dateKey} на сервер`);
+  }
 
   // Кэшируем только если есть результат
   if (tableRows.length > 0) {
