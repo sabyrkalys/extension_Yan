@@ -6,6 +6,10 @@ const fs        = require('fs');
 const http      = require('http');
 const crypto    = require('crypto');
 
+// Директория для медиафайлов
+const MEDIA_DIR = path.join(__dirname, 'media');
+if (!fs.existsSync(MEDIA_DIR)) fs.mkdirSync(MEDIA_DIR, { recursive: true });
+
 const args = process.argv.slice(2);
 if (args[0] === '--issue' || args[0] === '--revoke' || args[0] === '--list') {
   const db = new Database(path.join(__dirname, 'data.db'));
@@ -70,8 +74,96 @@ const ALLOWED_FILES = ['manifest.json','content.js','background.js','inject.js',
 const MIME_TYPES = { '.js':'application/javascript', '.json':'application/json', '.png':'image/png', '.zip':'application/zip' };
 
 const httpServer = http.createServer((req, res) => {
-  res.setHeader('Access-Control-Allow-Origin','*');
-  const fileName = path.basename(req.url.split('?')[0]);
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+
+  const urlPath = req.url.split('?')[0];
+
+  // ── Загрузка медиафайла ────────────────────────────────────────────────
+  if (req.method === 'POST' && urlPath === '/media/upload') {
+    const MAX_SIZE = 100 * 1024 * 1024; // 100 MB
+
+    // Парсим multipart/form-data вручную (без доп. зависимостей)
+    const contentType = req.headers['content-type'] || '';
+    const boundaryMatch = contentType.match(/boundary=(.+)/);
+    if (!boundaryMatch) { res.writeHead(400); res.end('No boundary'); return; }
+    const boundary = boundaryMatch[1].trim();
+
+    let body = Buffer.alloc(0);
+    let totalSize = 0;
+    let tooLarge = false;
+
+    req.on('data', chunk => {
+      totalSize += chunk.length;
+      if (totalSize > MAX_SIZE) { tooLarge = true; req.destroy(); return; }
+      body = Buffer.concat([body, chunk]);
+    });
+
+    req.on('end', () => {
+      if (tooLarge) {
+        res.writeHead(413); res.end(JSON.stringify({ error: 'Файл превышает 100 МБ' })); return;
+      }
+      try {
+        const parsed = parseMultipart(body, boundary);
+        const entityId  = parsed.fields['entity_id'];
+        const mediaType = parsed.fields['type']; // 'photo' или 'video'
+        const file      = parsed.files['file'];
+
+        if (!entityId || !mediaType || !file) {
+          res.writeHead(400); res.end(JSON.stringify({ error: 'Не хватает полей' })); return;
+        }
+
+        // Определяем расширение
+        const origExt = path.extname(file.filename || '').toLowerCase() || (mediaType === 'photo' ? '.jpg' : '.mp4');
+        const safeName = `${entityId}_${mediaType}${origExt}`;
+        const destPath = path.join(MEDIA_DIR, safeName);
+
+        fs.writeFileSync(destPath, file.data);
+        log(`📁 Медиафайл сохранён: ${safeName} (${(file.data.length/1024/1024).toFixed(1)} МБ)`);
+
+        // Обновляем SQLite
+        try {
+          if (mediaType === 'photo') {
+            db.prepare(`UPDATE targets SET has_photo=1, updated_at=datetime('now') WHERE entity_id=?`).run(String(entityId));
+          } else if (mediaType === 'video') {
+            db.prepare(`UPDATE targets SET has_video=1, updated_at=datetime('now') WHERE entity_id=?`).run(String(entityId));
+          }
+        } catch {}
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, path: safeName }));
+      } catch (err) {
+        log(`❌ Ошибка загрузки: ${err.message}`);
+        res.writeHead(500); res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+
+    req.on('error', () => {
+      if (!res.headersSent) { res.writeHead(500); res.end(); }
+    });
+    return;
+  }
+
+  // ── Отдача медиафайла ──────────────────────────────────────────────────
+  if (req.method === 'GET' && urlPath.startsWith('/media/')) {
+    const fileName = path.basename(urlPath);
+    const filePath = path.join(MEDIA_DIR, fileName);
+    if (!fs.existsSync(filePath)) { res.writeHead(404); res.end('Not found'); return; }
+    const ext = path.extname(fileName).toLowerCase();
+    const mime = { '.jpg':  'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+                   '.mp4':  'video/mp4',  '.mov':  'video/quicktime', '.avi': 'video/x-msvideo',
+                   '.webm': 'video/webm' }[ext] || 'application/octet-stream';
+    const stat = fs.statSync(filePath);
+    res.writeHead(200, { 'Content-Type': mime, 'Content-Length': stat.size });
+    fs.createReadStream(filePath).pipe(res);
+    return;
+  }
+
+  // ── Раздача файлов расширения ──────────────────────────────────────────
+  const fileName = path.basename(urlPath);
   if (!ALLOWED_FILES.includes(fileName)) { res.writeHead(404); res.end('Not found'); return; }
   const filePath = fileName === 'astra_extension.zip' ? path.join(__dirname, fileName) : path.join(EXTENSION_DIR, fileName);
   if (!fs.existsSync(filePath)) { res.writeHead(404); res.end('File not found'); return; }
@@ -79,6 +171,64 @@ const httpServer = http.createServer((req, res) => {
   fs.createReadStream(filePath).pipe(res);
 });
 httpServer.listen(5001, () => log('📦 HTTP сервер запущен на порту 5001'));
+
+// ── Парсер multipart/form-data (без npm-зависимостей) ──────────────────────
+function parseMultipart(body, boundary) {
+  const fields = {};
+  const files  = {};
+  const sep    = Buffer.from('--' + boundary);
+  const parts  = splitBuffer(body, sep);
+
+  for (const part of parts) {
+    if (!part || part.length < 4) continue;
+    // Ищем разделитель заголовков и тела \r\n\r\n
+    const headerEnd = indexOfSequence(part, Buffer.from('\r\n\r\n'));
+    if (headerEnd === -1) continue;
+    const headerStr = part.slice(0, headerEnd).toString('utf8');
+    const bodyPart  = part.slice(headerEnd + 4);
+    // Убираем финальный \r\n
+    const data = bodyPart.slice(0, bodyPart.length - 2);
+
+    const dispMatch  = headerStr.match(/Content-Disposition:[^\r\n]*name="([^"]+)"/i);
+    const fileMatch  = headerStr.match(/filename="([^"]+)"/i);
+    if (!dispMatch) continue;
+    const fieldName = dispMatch[1];
+
+    if (fileMatch) {
+      files[fieldName] = { filename: fileMatch[1], data };
+    } else {
+      fields[fieldName] = data.toString('utf8');
+    }
+  }
+  return { fields, files };
+}
+
+function splitBuffer(buf, sep) {
+  const parts = [];
+  let start = 0;
+  while (true) {
+    const idx = indexOfSequence(buf, sep, start);
+    if (idx === -1) break;
+    parts.push(buf.slice(start, idx));
+    start = idx + sep.length;
+    // Пропускаем \r\n после boundary
+    if (buf[start] === 0x0d && buf[start+1] === 0x0a) start += 2;
+    // Конец: -- после boundary
+    if (buf[start] === 0x2d && buf[start+1] === 0x2d) break;
+  }
+  return parts.filter(p => p.length > 0);
+}
+
+function indexOfSequence(buf, seq, offset = 0) {
+  for (let i = offset; i <= buf.length - seq.length; i++) {
+    let found = true;
+    for (let j = 0; j < seq.length; j++) {
+      if (buf[i+j] !== seq[j]) { found = false; break; }
+    }
+    if (found) return i;
+  }
+  return -1;
+}
 
 // ── База данных ──────────────────────────────────────────────────────
 const db = new Database(path.join(__dirname, 'data.db'));
