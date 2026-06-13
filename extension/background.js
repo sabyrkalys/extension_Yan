@@ -161,23 +161,57 @@ chrome.tabs.onRemoved.addListener(() => {
   });
 });
 
-// ── Загрузка медиафайла: проксируем через VPS → AstraMap S3 ────────────────
-// Браузерный fetch не может делать PUT в MinIO (Host-header mismatch в presigned URL).
-// VPS-сервер делает fetch от своего имени — без ограничений браузера.
-async function handleMediaUpload({ token, mediaType, fileName, mimeType, base64Data }) {
+// ── Загрузка медиафайла через chrome.scripting.executeScript (MAIN world) ────
+// chrome.scripting.executeScript с world:'MAIN' выполняет код в контексте страницы
+// — с полными cookies и сессией. Это официальный способ обойти изоляцию.
+// background.js получает presignedUrl + base64 от content script,
+// инжектирует PUT-запрос в MAIN world вкладки с center.astramaps.ru.
+async function handleMediaUpload({ presignedUrl, mimeType, base64Data, token }, tabId) {
   try {
-    const res = await fetch(`${HTTP_URL}/media/upload-to-astra`, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ token, fileName, mimeType, mediaType, base64Data }),
+    if (!tabId) throw new Error('tabId не определён');
+
+    // Выполняем PUT в MAIN world страницы:
+    // — fetch в MAIN world имеет Sec-Fetch-Site: same-origin
+    // — nginx видит Authorization + same-origin → стрипает Authorization → передаёт в MinIO
+    // — MinIO валидирует presigned URL подпись → 200 OK
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      world:  'MAIN',
+      func:   async (url, b64, mime, tok) => {
+        try {
+          const bytes = atob(b64);
+          const arr   = new Uint8Array(bytes.length);
+          for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+
+          const res = await fetch(url, {
+            method:  'PUT',
+            headers: {
+              'Authorization': `Bearer ${tok}`,
+              'x-amz-acl':     'public-read',
+            },
+            body: arr.buffer,
+          });
+
+          let errText = '';
+          if (!res.ok) {
+            try { errText = await res.text(); } catch {}
+          }
+          return { ok: res.ok, status: res.status, errText };
+        } catch (e) {
+          return { ok: false, error: e.message };
+        }
+      },
+      args: [presignedUrl, base64Data, mimeType, token],
     });
-    if (!res.ok) {
-      const text = await res.text();
-      return { ok: false, error: `HTTP ${res.status}: ${text}` };
+
+    const result = results?.[0]?.result;
+    if (!result?.ok) {
+      return { ok: false, error: `S3 PUT HTTP ${result?.status || '?'}: ${result?.errText || result?.error || ''}` };
     }
-    return await res.json(); // { ok: true, permanentURL, mediaItem }
+    return { ok: true };
+
   } catch (err) {
-    console.error('[bg] Ошибка upload-to-astra:', err);
+    console.error('[bg] executeScript error:', err);
     return { ok: false, error: err.message };
   }
 }
@@ -185,7 +219,8 @@ async function handleMediaUpload({ token, mediaType, fileName, mimeType, base64D
 // ── Обработчик одноразовых сообщений от content script ───────────────────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'UPLOAD_MEDIA') {
-    handleMediaUpload(msg)
+    const tabId = sender.tab?.id;
+    handleMediaUpload(msg, tabId)
       .then(sendResponse)
       .catch(err => sendResponse({ ok: false, error: err.message }));
     return true; // сигнал Chrome что ответ будет асинхронным

@@ -3,24 +3,23 @@
 // Зависимости: store.js, wsClient.js, ui/tasks.js, ui/planning.js, ui/toast.js, utils/date.js
 
 // ── Загрузка медиафайла в AstraMap ────────────────────────────────────────────
-// AstraMap при загрузке файла посылает в PUT:
-//   Authorization: Bearer <token>  ← nginx требует это для пропуска
-//   x-amz-acl: public-read         ← требует MinIO (в SignedHeaders)
-//   Cookie                          ← браузер добавляет автоматически (same-origin)
-// Делаем PUT прямо из content script — same-origin, cookies включены автоматически.
+// Проблема: content script имеет Sec-Fetch-Site != same-origin.
+// nginx стрипает Authorization только для same-origin запросов (страница).
+// Решение: chrome.scripting.executeScript(world:'MAIN') — код запускается
+// в контексте страницы → Sec-Fetch-Site: same-origin → nginx стрипает Auth
+// → MinIO валидирует presigned URL → 200 OK.
 async function uploadMediaFile(file, mediaType) {
   const label = mediaType === 'photo' ? 'Фото' : 'Видео';
   try {
     const token = getToken();
     if (!token) throw new Error('Токен не найден');
 
-    // Шаг 1: получить presigned URL
-    // Sanitize filename — убираем кириллицу и пробелы (AstraMap генерирует ASCII ключи)
+    // Шаг 1: presigned URL (этот запрос — обычный API, работает из content script)
     const safeFileName = file.name
-      .replace(/[^\x00-\x7F]/g, '')    // убрать не-ASCII (кириллица)
-      .replace(/\s+/g, '_')               // пробелы → underscore
-      .replace(/[^\w.\-]/g, '_')         // спецсимволы → underscore
-      || ('file_' + Date.now());           // fallback если имя целиком не-ASCII
+      .replace(/[^\x00-\x7F]/g, '')
+      .replace(/\s+/g, '_')
+      .replace(/[^\w.\-]/g, '_')
+      || ('file_' + Date.now());
 
     const presignRes = await fetch(
       `https://center.astramaps.ru/go/presigned?${new URLSearchParams({ fileName: safeFileName })}`,
@@ -29,24 +28,41 @@ async function uploadMediaFile(file, mediaType) {
     if (!presignRes.ok) throw new Error(`presigned HTTP ${presignRes.status}`);
     const { presignedRequest, permanentURL } = await presignRes.json();
 
-    // Шаг 2: PUT в S3
-    // ArrayBuffer body — браузер не добавляет Content-Type (избегаем image/jpeg)
-    const fileBuffer = await file.arrayBuffer();
-    const putRes = await fetch(presignedRequest.URL, {
-      method:       'PUT',
-      credentials:  'include',          // ← явно отправляем cookies (access_token)
-      headers:      { 'x-amz-acl': 'public-read' },   // без Authorization
-      body:         fileBuffer,
+    // Шаг 2: файл → base64 для передачи через sendMessage
+    const base64Data = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload  = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = () => reject(new Error('Ошибка чтения файла'));
+      reader.readAsDataURL(file);
     });
-    if (!putRes.ok) {
-      const errText = await putRes.text().catch(() => '');
-      throw new Error(`S3 PUT HTTP ${putRes.status}: ${errText}`);
-    }
-    console.log(`[media] ${label} → AstraMap: ${permanentURL}`);
 
-    // Возвращаем объект для parameters["8"]
+    // Шаг 3: PUT через background → executeScript(world:'MAIN')
+    // В MAIN world fetch имеет Sec-Fetch-Site: same-origin
+    // → nginx стрипает Authorization → MinIO видит только presigned URL → 200 OK
+    const response = await new Promise((resolve) => {
+      chrome.runtime.sendMessage({
+        type:         'UPLOAD_MEDIA',
+        presignedUrl: presignedRequest.URL,
+        permanentURL,
+        mediaType,
+        fileName:     safeFileName,
+        mimeType:     file.type || 'application/octet-stream',
+        base64Data,
+        token,
+      }, (res) => {
+        if (chrome.runtime.lastError) {
+          resolve({ ok: false, error: chrome.runtime.lastError.message });
+        } else {
+          resolve(res || { ok: false, error: 'Нет ответа от background' });
+        }
+      });
+    });
+
+    if (!response.ok) throw new Error(response.error || 'Ошибка загрузки');
+
+    console.log(`[media] ${label} → AstraMap: ${permanentURL}`);
     return {
-      file: { path: `./${file.name}`, relativePath: `./${file.name}` },
+      file: { path: `./${safeFileName}`, relativePath: `./${safeFileName}` },
       type: mediaType === 'photo' ? 'image' : 'video',
       url:  permanentURL,
     };
