@@ -83,23 +83,16 @@ const httpServer = http.createServer((req, res) => {
   const urlPath = req.url.split('?')[0];
 
   // ── Загрузка медиафайла ────────────────────────────────────────────────
-  if (req.method === 'POST' && urlPath === '/media/upload') {
-    const MAX_SIZE = 100 * 1024 * 1024; // 100 MB
-
-    // Парсим multipart/form-data вручную (без доп. зависимостей)
-    const contentType = req.headers['content-type'] || '';
-    const boundaryMatch = contentType.match(/boundary=(.+)/);
-    if (!boundaryMatch) { res.writeHead(400); res.end('No boundary'); return; }
-    const boundary = boundaryMatch[1].trim();
-
-    let body = Buffer.alloc(0);
+ if (req.method === 'POST' && urlPath === '/media/upload') {
+    const MAX_SIZE = 100 * 1024 * 1024;
+    let body = '';
     let totalSize = 0;
     let tooLarge = false;
 
     req.on('data', chunk => {
       totalSize += chunk.length;
       if (totalSize > MAX_SIZE) { tooLarge = true; req.destroy(); return; }
-      body = Buffer.concat([body, chunk]);
+      body += chunk.toString();
     });
 
     req.on('end', () => {
@@ -107,34 +100,33 @@ const httpServer = http.createServer((req, res) => {
         res.writeHead(413); res.end(JSON.stringify({ error: 'Файл превышает 100 МБ' })); return;
       }
       try {
-        const parsed = parseMultipart(body, boundary);
-        const entityId  = parsed.fields['entity_id'];
-        const mediaType = parsed.fields['type']; // 'photo' или 'video'
-        const file      = parsed.files['file'];
+        const { entityId, mediaType, fileName, base64Data } = JSON.parse(body);
 
-        if (!entityId || !mediaType || !file) {
+        if (!entityId || !mediaType || !base64Data) {
           res.writeHead(400); res.end(JSON.stringify({ error: 'Не хватает полей' })); return;
         }
 
-        // Определяем расширение
-        const origExt = path.extname(file.filename || '').toLowerCase() || (mediaType === 'photo' ? '.jpg' : '.mp4');
-        const safeName = `${entityId}_${mediaType}${origExt}`;
-        const destPath = path.join(MEDIA_DIR, safeName);
+        const fileBuffer = Buffer.from(base64Data, 'base64');
+        const origExt    = path.extname(fileName || '').toLowerCase() || (mediaType === 'photo' ? '.jpg' : '.mp4');
+        const safeName   = `${entityId}_${mediaType}${origExt}`;
+        const destPath   = path.join(MEDIA_DIR, safeName);
 
-        fs.writeFileSync(destPath, file.data);
-        log(`📁 Медиафайл сохранён: ${safeName} (${(file.data.length/1024/1024).toFixed(1)} МБ)`);
+        fs.writeFileSync(destPath, fileBuffer);
+        log(`📁 Медиафайл сохранён: ${safeName} (${(fileBuffer.length / 1024 / 1024).toFixed(1)} МБ)`);
 
-        // Обновляем SQLite
         try {
           if (mediaType === 'photo') {
             db.prepare(`UPDATE targets SET has_photo=1, updated_at=datetime('now') WHERE entity_id=?`).run(String(entityId));
-          } else if (mediaType === 'video') {
+          } else {
             db.prepare(`UPDATE targets SET has_video=1, updated_at=datetime('now') WHERE entity_id=?`).run(String(entityId));
           }
-        } catch {}
+        } catch (dbErr) {
+          log(`⚠️  SQLite update failed: ${dbErr.message}`);
+        }
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true, path: safeName }));
+
       } catch (err) {
         log(`❌ Ошибка загрузки: ${err.message}`);
         res.writeHead(500); res.end(JSON.stringify({ error: err.message }));

@@ -162,23 +162,20 @@ chrome.tabs.onRemoved.addListener(() => {
 });
 
 // ── Загрузка медиафайла через background (обход Mixed Content) ────────────────
-// Content script передаёт файл как base64, background делает fetch на HTTP сервер.
+// Файл уже в base64 (пришёл из FileReader через sendMessage).
+// Передаём как JSON — надёжнее кастомного multipart-парсера на сервере.
 async function handleMediaUpload({ entityId, mediaType, fileName, mimeType, base64Data }) {
   try {
-    // Декодируем base64 → Blob
-    const bytes = atob(base64Data);
-    const arr   = new Uint8Array(bytes.length);
-    for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
-    const blob = new Blob([arr], { type: mimeType || 'application/octet-stream' });
-
-    const formData = new FormData();
-    formData.append('entity_id', String(entityId));
-    formData.append('type', mediaType);           // 'photo' или 'video'
-    formData.append('file', blob, fileName || 'file');
-
     const res = await fetch(`${HTTP_URL}/media/upload`, {
-      method: 'POST',
-      body:   formData,
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        entityId:  String(entityId),
+        mediaType,
+        fileName:  fileName || 'file',
+        mimeType:  mimeType  || 'application/octet-stream',
+        base64Data,
+      }),
     });
 
     if (!res.ok) {
