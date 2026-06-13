@@ -87,9 +87,9 @@ if (req.method === 'POST' && urlPath === '/media/upload-to-astra') {
     let body = '';
     req.on('data', chunk => { body += chunk.toString(); });
     req.on('end', async () => {
-      try {
-        const { token, fileName, mimeType, mediaType, base64Data } = JSON.parse(body);
-        if (!token || !fileName || !base64Data || !mediaType) {
+  try {
+    const { token, fileName, mimeType, mediaType, base64Data, cookieStr } = JSON.parse(body);  // ← вот эта строка
+    if (!token || !fileName || !base64Data || !mediaType) {
           res.writeHead(400); res.end(JSON.stringify({ error: 'Не хватает полей' })); return;
         }
 
@@ -106,12 +106,11 @@ if (req.method === 'POST' && urlPath === '/media/upload-to-astra') {
 
         // Шаг 2: PUT файл в S3 (серверная сторона — нет ограничений браузера)
         const fileBuffer = Buffer.from(base64Data, 'base64');
+        // Стало:
         const putRes = await fetch(presignedRequest.URL, {
           method:  'PUT',
           headers: {
-            'x-amz-acl':      'public-read',
-            'Content-Type':   mimeType || 'application/octet-stream',
-            'Content-Length': String(fileBuffer.length),
+            'x-amz-acl': 'public-read',
           },
           body: fileBuffer,
           duplex: 'half',
