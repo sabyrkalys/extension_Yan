@@ -2,53 +2,53 @@
 // Сборка главной панели расширения, кнопка на карте, инициализация UI.
 // Зависимости: store.js, wsClient.js, ui/tasks.js, ui/planning.js, ui/toast.js, utils/date.js
 
-// ── Загрузка медиафайла через background.js (обход Mixed Content) ────────────
-// Прямой fetch из content script на http:// блокируется браузером (Mixed Content).
-// Решение: конвертируем файл в base64, передаём в background service worker
-// через chrome.runtime.sendMessage — он делает fetch без ограничений.
-async function uploadMediaFile(entityId, file, mediaType) {
+// ── Загрузка медиафайла в AstraMap (presigned S3) ────────────────────────────
+// Двухшаговый процесс:
+// 1. GET /go/presigned?fileName=... → presignedURL + permanentURL
+// 2. PUT файл напрямую в S3 по presignedURL
+// Возвращает объект для parameters["8"] или null при ошибке.
+async function uploadMediaFile(file, mediaType) {
   const label = mediaType === 'photo' ? 'Фото' : 'Видео';
-
   try {
-    // Читаем файл как base64
-    const base64Data = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload  = () => resolve(reader.result.split(',')[1]); // убираем "data:...;base64,"
-      reader.onerror = () => reject(new Error('Ошибка чтения файла'));
-      reader.readAsDataURL(file);
-    });
+    const token = getToken();
 
-    // Отправляем в background.js, он делает fetch на HTTP сервер
-    const response = await new Promise((resolve) => {
-      chrome.runtime.sendMessage({
-        type:      'UPLOAD_MEDIA',
-        entityId:  String(entityId),
-        mediaType,
-        fileName:  file.name,
-        mimeType:  file.type,
-        base64Data,
-      }, (res) => {
-        if (chrome.runtime.lastError) {
-          resolve({ ok: false, error: chrome.runtime.lastError.message });
-        } else {
-          resolve(res || { ok: false, error: 'Нет ответа от background' });
-        }
-      });
-    });
+    // Шаг 1: получить presigned URL
+    const presignRes = await fetch(
+      `https://center.astramaps.ru/go/presigned?${new URLSearchParams({ fileName: file.name })}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+    if (!presignRes.ok) throw new Error(`presigned HTTP ${presignRes.status}`);
+    const { presignedRequest, permanentURL } = await presignRes.json();
 
-    if (response.ok) {
-      showToast(`✅ ${label} загружено`, 'success');
-      return true;
-    } else {
-      throw new Error(response.error || 'Неизвестная ошибка');
-    }
+    // Шаг 2: загрузить файл в S3 по presigned URL
+    const putRes = await fetch(presignedRequest.URL, {
+      method:  'PUT',
+      headers: { 'x-amz-acl': 'public-read' },
+      body:    file,
+    });
+    if (!putRes.ok) throw new Error(`S3 PUT HTTP ${putRes.status}`);
+
+    console.log(`[media] ${label} загружено в AstraMap: ${permanentURL}`);
+
+    // Возвращаем объект формата AstraMap parameters["8"]
+    return {
+      file: { path: `./${file.name}`, relativePath: `./${file.name}` },
+      type: mediaType === 'photo' ? 'image' : 'video',
+      url:  permanentURL,
+    };
 
   } catch (err) {
     console.error(`[media] Ошибка загрузки ${mediaType}:`, err);
     showToast(`❌ Ошибка загрузки ${label}: ${err.message}`, 'error');
-    return false;
+    return null;
   }
 }
+
 
 function createPopup() {
   if (popupElement) return popupElement;
@@ -423,36 +423,48 @@ function createPopup() {
       const _targetEntry   = _dates.find(d => d.date === _targetDate);
       const _targetFolderId = _targetEntry?.folderId || latestFolderId;
 
-      // ── Шаг 1: создать объект в AstraMap ──────────────────────────────
+      // ── Шаг 1: загрузить медиа в AstraMap ПЕРЕД созданием объекта ─────
+      // Медиа должны быть в parameters["8"] уже при создании
+      const mediaItems = [];
+
+      if (photoFile) {
+        showToast('⏳ Загружаем фото...', 'info');
+        const photoItem = await uploadMediaFile(photoFile, 'photo');
+        if (photoItem) mediaItems.push(photoItem);
+      }
+
+      if (videoFile) {
+        showToast('⏳ Загружаем видео...', 'info');
+        const videoItem = await uploadMediaFile(videoFile, 'video');
+        if (videoItem) mediaItems.push(videoItem);
+      }
+
+      // ── Шаг 2: создать объект в AstraMap (с медиа в param "8") ────────
       let astraResult = null;
       try {
-        astraResult = await apiSendTarget(rowData, _targetFolderId);
+        astraResult = await apiSendTarget(rowData, _targetFolderId, mediaItems);
       } catch (err) {
         showToast('❌ Ошибка создания в AstraMap: ' + err.message, 'error');
         return;
       }
 
-      // Извлекаем entity_id из ответа AstraMap
-      // Возможные форматы: { id }, { entity: { id } }, { entityID }
       const newEntityId = astraResult?.id
                        || astraResult?.entity?.id
                        || astraResult?.entityID
                        || null;
 
       if (!newEntityId) {
-        console.warn('[addTarget] Не удалось получить entity_id из ответа:', astraResult);
+        console.warn('[addTarget] entity_id не определён из ответа:', astraResult);
       }
 
-      // ── Шаг 2: перезагрузить таблицу ──────────────────────────────────
-      // loadByDateFromPanel → loadTargetsFromFolder → SYNC_TARGETS (вставляет строку в SQLite)
+      // ── Шаг 3: перезагрузить таблицу ──────────────────────────────────
       await loadByDateFromPanel(_targetDate);
 
-      // ── Шаг 3: сохранить локальные поля через WS ──────────────────────
-      // Ждём 700 мс чтобы SYNC_TARGETS обработался и строка появилась в SQLite
-      if (newEntityId && (address || photoFile || videoFile)) {
+      // ── Шаг 4: сохранить локальные поля (адрес, медиа-флаги) в SQLite ─
+      if (newEntityId && (address || mediaItems.length > 0)) {
         await new Promise(r => setTimeout(r, 700));
 
-        // Адрес → UPDATE_TARGET_LOCAL → server broadcasts TARGET_UPDATED
+        // Адрес
         if (address) {
           wsSend({
             type:      'UPDATE_TARGET_LOCAL',
@@ -461,14 +473,14 @@ function createPopup() {
           });
         }
 
-        // Фото → POST /media/upload (сервер сам ставит has_photo=1 в SQLite)
-        if (photoFile) {
-          await uploadMediaFile(newEntityId, photoFile, 'photo');
-        }
-
-        // Видео → POST /media/upload (сервер сам ставит has_video=1 в SQLite)
-        if (videoFile) {
-          await uploadMediaFile(newEntityId, videoFile, 'video');
+        // Медиа-флаги (для индикаторов 📷/🎥 в таблице)
+        if (mediaItems.length > 0) {
+          wsSend({
+            type:      'UPDATE_TARGET_LOCAL',
+            entity_id: String(newEntityId),
+            has_photo: mediaItems.some(m => m.type === 'image') ? 1 : 0,
+            has_video: mediaItems.some(m => m.type === 'video') ? 1 : 0,
+          });
         }
       }
 

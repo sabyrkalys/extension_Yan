@@ -1,15 +1,11 @@
 // content/api/astraApi.js
 // Все HTTP-запросы к AstraMap API.
 // Зависимости: config.js (ASTRA_API, ROOT_FOLDER_ID), utils/coords.js, utils/date.js
-//
-// Принцип: каждая функция делает ровно один запрос.
-// Бизнес-логика (что делать с ответом) — в content.js.
 
 // ── Вспомогательные ──────────────────────────────────────────────────────────
 
-// Заголовки с токеном (всегда свежий из localStorage)
 function apiHeaders() {
-  const token = getToken(); // ✅ глобальная функция из config.js
+  const token = getToken();
   return {
     'Content-Type':  'application/json',
     'Authorization': `Bearer ${token}`,
@@ -17,12 +13,10 @@ function apiHeaders() {
   };
 }
 
-// Маппинг результата поражения в метку AstraMap — из config.js
 function mapResult(result) {
   return RESULT_MAP_TO_ASTRA[result] || 'Вскрыто';
 }
 
-// Маппинг характеристики цели в templateID AstraMap — из config.js
 function mapTargetType(characteristic) {
   return TARGET_TYPE_TO_ID[characteristic] || '1100000';
 }
@@ -33,9 +27,30 @@ function parseCoord(coordStr) {
   return isNaN(num) ? null : num;
 }
 
+// ── Медиа: получить presigned URL от AstraMap ─────────────────────────────────
+// AstraMap хранит медиафайлы в S3/MinIO.
+// Шаг 1: GET /go/presigned?fileName=... → presignedRequest.URL + permanentURL
+// Шаг 2: PUT файл по presignedRequest.URL
+// Шаг 3: передать permanentURL в parameters["8"] при создании/обновлении объекта
+async function apiGetPresignedUrl(fileName) {
+  const url = `https://center.astramaps.ru/go/presigned?${new URLSearchParams({ fileName })}`;
+  const res = await fetch(url, { headers: apiHeaders() });
+  if (!res.ok) throw new Error(`presigned HTTP ${res.status}`);
+  return res.json(); // { presignedRequest: { URL, Method, SignedHeader }, permanentURL }
+}
+
+// Шаг 2: загрузить файл по presigned URL напрямую в S3
+async function apiPutFileToS3(presignedUrl, file) {
+  const res = await fetch(presignedUrl, {
+    method:  'PUT',
+    headers: { 'x-amz-acl': 'public-read' },
+    body:    file,
+  });
+  if (!res.ok) throw new Error(`S3 PUT HTTP ${res.status}`);
+}
+
 // ── Объекты ──────────────────────────────────────────────────────────────────
 
-// Получить объект по id
 async function apiGetTargetById(id) {
   const res = await fetch(ASTRA_API.search, {
     method: 'POST',
@@ -48,7 +63,6 @@ async function apiGetTargetById(id) {
   return data.entities?.[0]?.entity || null;
 }
 
-// Получить высоту в точке (lon, lat WGS-84)
 async function apiGetHeightAtPoint(lon, lat) {
   const res = await fetch(
     `https://center.astramaps.ru/viewshed/height?lon=${lon}&lat=${lat}`,
@@ -58,12 +72,14 @@ async function apiGetHeightAtPoint(lon, lat) {
   return res.json();
 }
 
-// Создать / обновить объект на карте (цель)
-async function apiSendTarget(rowData, parentFolderId) {
+// Создать / обновить объект на карте
+// mediaItems — массив медиафайлов для parameters["8"]:
+//   [{ file: { path, relativePath }, type: "image"|"video", url: permanentURL }]
+async function apiSendTarget(rowData, parentFolderId, mediaItems = []) {
   const { targetNumber, characteristic, coordX, coordY, impactTime, result, defeatDate } = rowData;
 
-  const sk42easting  = parseFloat(coordY); // колонка «У»
-  const sk42northing = parseFloat(coordX); // колонка «Х»
+  const sk42easting  = parseFloat(coordY);
+  const sk42northing = parseFloat(coordX);
 
   if (isNaN(sk42easting) || isNaN(sk42northing)) {
     showToast('❌ Некорректные координаты (не числа)', 'error');
@@ -104,7 +120,7 @@ async function apiSendTarget(rowData, parentFolderId) {
       '5':  { value: color },
       '6':  { value: mapTargetType(characteristic) },
       '7':  { value: mapResult(result) },
-      '8':  { value: [] },
+      '8':  { value: mediaItems },       // ← медиафайлы (пустой массив если не загружались)
       '9':  { value: 'ВР Войсковая разведка' },
       '10': { value: 'Почти наверняка' },
       '11': { value: 'Актуально' },
@@ -142,8 +158,7 @@ async function apiDeleteTarget(targetId) {
   return true;
 }
 
-// Переместить объект в другую папку — BulkRelink API
-// Формат: { EntityIDs: [id], NewParentID: newParentId }
+// Переместить объект в другую папку
 async function apiMoveEntity(entityId, newParentId) {
   const res = await fetch(ASTRA_API.relink, {
     method: 'POST',
@@ -160,7 +175,6 @@ async function apiMoveEntity(entityId, newParentId) {
 
 // ── Папки ────────────────────────────────────────────────────────────────────
 
-// Получить дочерние элементы папки (только папки, templateID=1)
 async function apiFetchFolderChildren(parentId) {
   const res = await fetch(ASTRA_API.search, {
     method: 'POST',
@@ -179,7 +193,6 @@ async function apiFetchFolderChildren(parentId) {
   return data.entities || data.items || [];
 }
 
-// Получить parentEntityID для папки (нужен для навигации вверх по дереву)
 async function apiGetParentFolderId(folderId) {
   try {
     const res = await fetch(`${ASTRA_API.entity}/${folderId}`, {
@@ -190,7 +203,6 @@ async function apiGetParentFolderId(folderId) {
   } catch { return null; }
 }
 
-// Создать папку внутри parentId
 async function apiCreateFolder(parentId, title) {
   const res = await fetch(ASTRA_API.createUpdate, {
     method: 'POST',
@@ -211,10 +223,7 @@ async function apiCreateFolder(parentId, title) {
 
 // ── Загрузка объектов из папки ────────────────────────────────────────────────
 
-// Загрузить объекты папки за дату (один fetch)
 async function apiFetchTargetsInFolder(folderId, date) {
-  // Без фильтра по дате создания — другие подразделения добавляют объекты
-  // в папку-день в любое время. Берём всё содержимое папки (maxDepth=1 = только корень).
   const body = {
     maxDepth:      1,
     withCounters:  false,
@@ -235,9 +244,8 @@ async function apiFetchTargetsInFolder(folderId, date) {
   const data = await res.json();
   return data.entities || data.items || [];
 }
+
 // ── Парсинг названия папки-месяца ─────────────────────────────────────────────
-// Форматы: "Май 2026 г.", "май 2026г.", "05.2026 г.", "2026-05"
-// Возвращает { month: 1-12, year: 2024 } или null
 function parseMonthFolder(title) {
   if (!title) return null;
 
@@ -249,7 +257,6 @@ function parseMonthFolder(title) {
 
   const t = title.toLowerCase().trim();
 
-  // Формат: "Май 2026 г." / "январь 2026"
   for (const [key, num] of Object.entries(MONTHS)) {
     if (t.startsWith(key)) {
       const yearMatch = t.match(/\b(202\d|203\d)\b/);
@@ -257,7 +264,6 @@ function parseMonthFolder(title) {
     }
   }
 
-  // Формат: "05.2026" или "05.2026 г."
   const dotMatch = t.match(/^(\d{1,2})\.(\d{4})/);
   if (dotMatch) {
     const m = parseInt(dotMatch[1]);
@@ -265,7 +271,6 @@ function parseMonthFolder(title) {
     if (m >= 1 && m <= 12) return { month: m, year: y };
   }
 
-  // Формат: "2026-05"
   const isoMatch = t.match(/^(\d{4})-(\d{2})/);
   if (isoMatch) {
     const m = parseInt(isoMatch[2]);
@@ -277,13 +282,10 @@ function parseMonthFolder(title) {
 }
 
 // ── Парсинг названия папки-дня → YYYY-MM-DD ───────────────────────────────────
-// Форматы: "30.05.2026", "30.05.26", "30.05", "2026-05-30", "30 мая 2026"
-// Возвращает строку "YYYY-MM-DD" или null
 function parseFolderDate(title) {
   if (!title) return null;
   const t = title.trim();
 
-  // "2026-05-30" — ISO
   const iso = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (iso) {
     const [, y, m, d] = iso;
@@ -291,7 +293,6 @@ function parseFolderDate(title) {
       return `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
   }
 
-  // "30.05.2026" или "30.05.26"
   const dot = t.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
   if (dot) {
     const d = dot[1].padStart(2,'0');
@@ -302,7 +303,6 @@ function parseFolderDate(title) {
       return `${y}-${m}-${d}`;
   }
 
-  // "30.05" — без года, берём текущий год по МСК
   const noYear = t.match(/^(\d{1,2})\.(\d{1,2})$/);
   if (noYear) {
     const d = noYear[1].padStart(2,'0');
@@ -312,7 +312,6 @@ function parseFolderDate(title) {
       return `${y}-${m}-${d}`;
   }
 
-  // "30 мая 2026" — текстовый формат
   const MONTHS = {
     'янв':1,'фев':2,'мар':3,'апр':4,'май':5,'мая':5,
     'июн':6,'июл':7,'авг':8,'сен':9,'окт':10,'ноя':11,'дек':12,
