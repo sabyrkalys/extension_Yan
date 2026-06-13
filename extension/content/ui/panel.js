@@ -33,12 +33,10 @@ async function uploadMediaFile(file, mediaType) {
     // ArrayBuffer body — браузер не добавляет Content-Type (избегаем image/jpeg)
     const fileBuffer = await file.arrayBuffer();
     const putRes = await fetch(presignedRequest.URL, {
-      method:  'PUT',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'x-amz-acl':     'public-read',
-      },
-      body: fileBuffer,
+      method:       'PUT',
+      credentials:  'include',          // ← явно отправляем cookies (access_token)
+      headers:      { 'x-amz-acl': 'public-read' },   // без Authorization
+      body:         fileBuffer,
     });
     if (!putRes.ok) {
       const errText = await putRes.text().catch(() => '');
