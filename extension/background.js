@@ -183,13 +183,12 @@ async function handleMediaUpload({ presignedUrl, mimeType, base64Data, token }, 
           const arr   = new Uint8Array(bytes.length);
           for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
 
+          // Без Authorization — nginx принимает запрос по session cookie
+          // (MAIN world автоматически включает cookies страницы)
           const res = await fetch(url, {
             method:  'PUT',
-            headers: {
-              'Authorization': `Bearer ${tok}`,
-              'x-amz-acl':     'public-read',
-            },
-            body: arr.buffer,
+            headers: { 'x-amz-acl': 'public-read' },
+            body:    arr.buffer,
           });
 
           let errText = '';
