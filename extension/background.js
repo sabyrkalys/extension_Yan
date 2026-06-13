@@ -161,33 +161,23 @@ chrome.tabs.onRemoved.addListener(() => {
   });
 });
 
-// ── Загрузка медиафайла через background (обход Mixed Content) ────────────────
-// Файл уже в base64 (пришёл из FileReader через sendMessage).
-// Передаём как JSON — надёжнее кастомного multipart-парсера на сервере.
-async function handleMediaUpload({ entityId, mediaType, fileName, mimeType, base64Data }) {
+// ── Загрузка медиафайла: проксируем через VPS → AstraMap S3 ────────────────
+// Браузерный fetch не может делать PUT в MinIO (Host-header mismatch в presigned URL).
+// VPS-сервер делает fetch от своего имени — без ограничений браузера.
+async function handleMediaUpload({ token, mediaType, fileName, mimeType, base64Data }) {
   try {
-    const res = await fetch(`${HTTP_URL}/media/upload`, {
+    const res = await fetch(`${HTTP_URL}/media/upload-to-astra`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({
-        entityId:  String(entityId),
-        mediaType,
-        fileName:  fileName || 'file',
-        mimeType:  mimeType  || 'application/octet-stream',
-        base64Data,
-      }),
+      body:    JSON.stringify({ token, fileName, mimeType, mediaType, base64Data }),
     });
-
     if (!res.ok) {
       const text = await res.text();
       return { ok: false, error: `HTTP ${res.status}: ${text}` };
     }
-
-    const json = await res.json();
-    return json.ok ? { ok: true } : { ok: false, error: json.error || 'Ошибка сервера' };
-
+    return await res.json(); // { ok: true, permanentURL, mediaItem }
   } catch (err) {
-    console.error('[bg] Ошибка загрузки медиа:', err);
+    console.error('[bg] Ошибка upload-to-astra:', err);
     return { ok: false, error: err.message };
   }
 }

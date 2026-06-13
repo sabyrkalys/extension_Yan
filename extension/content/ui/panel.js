@@ -2,48 +2,51 @@
 // Сборка главной панели расширения, кнопка на карте, инициализация UI.
 // Зависимости: store.js, wsClient.js, ui/tasks.js, ui/planning.js, ui/toast.js, utils/date.js
 
-// ── Загрузка медиафайла в AstraMap (presigned S3) ────────────────────────────
-// Двухшаговый процесс:
-// 1. GET /go/presigned?fileName=... → presignedURL + permanentURL
-// 2. PUT файл напрямую в S3 по presignedURL
-// Возвращает объект для parameters["8"] или null при ошибке.
+// ── Загрузка медиафайла в AstraMap через VPS-прокси ──────────────────────────
+// Файл читается как base64, отправляется через background.js на наш VPS.
+// VPS делает presigned GET → S3 PUT от своего имени, возвращает permanentURL.
+// Возвращает mediaItem для parameters["8"] или null при ошибке.
 async function uploadMediaFile(file, mediaType) {
   const label = mediaType === 'photo' ? 'Фото' : 'Видео';
   try {
     const token = getToken();
+    if (!token) throw new Error('Токен не найден');
 
-    // Шаг 1: получить presigned URL
-    const presignRes = await fetch(
-      `https://center.astramaps.ru/go/presigned?${new URLSearchParams({ fileName: file.name })}`,
-      {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
-    if (!presignRes.ok) throw new Error(`presigned HTTP ${presignRes.status}`);
-    const { presignedRequest, permanentURL } = await presignRes.json();
-
-    // Шаг 2: загрузить файл в S3 по presigned URL
-    const putRes = await fetch(presignedRequest.URL, {
-      method:  'PUT',
-      headers: { 'x-amz-acl': 'public-read' },
-      body:    file,
+    // Читаем файл как base64 (для передачи через sendMessage)
+    const base64Data = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload  = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = () => reject(new Error('Ошибка чтения файла'));
+      reader.readAsDataURL(file);
     });
-    if (!putRes.ok) throw new Error(`S3 PUT HTTP ${putRes.status}`);
 
-    console.log(`[media] ${label} загружено в AstraMap: ${permanentURL}`);
+    // Отправляем в background.js → VPS → S3
+    const response = await new Promise((resolve) => {
+      chrome.runtime.sendMessage({
+        type:      'UPLOAD_MEDIA',
+        token,
+        mediaType,
+        fileName:  file.name,
+        mimeType:  file.type || 'application/octet-stream',
+        base64Data,
+      }, (res) => {
+        if (chrome.runtime.lastError) {
+          resolve({ ok: false, error: chrome.runtime.lastError.message });
+        } else {
+          resolve(res || { ok: false, error: 'Нет ответа от background' });
+        }
+      });
+    });
 
-    // Возвращаем объект формата AstraMap parameters["8"]
-    return {
-      file: { path: `./${file.name}`, relativePath: `./${file.name}` },
-      type: mediaType === 'photo' ? 'image' : 'video',
-      url:  permanentURL,
-    };
+    if (response.ok && response.mediaItem) {
+      console.log(`[media] ${label} загружено: ${response.permanentURL}`);
+      return response.mediaItem; // { file, type, url } для parameters["8"]
+    } else {
+      throw new Error(response.error || 'Ошибка загрузки');
+    }
 
   } catch (err) {
-    console.error(`[media] Ошибка загрузки ${mediaType}:`, err);
+    console.error(`[media] Ошибка ${mediaType}:`, err);
     showToast(`❌ Ошибка загрузки ${label}: ${err.message}`, 'error');
     return null;
   }

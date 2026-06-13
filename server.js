@@ -83,59 +83,61 @@ const httpServer = http.createServer((req, res) => {
   const urlPath = req.url.split('?')[0];
 
   // ── Загрузка медиафайла ────────────────────────────────────────────────
- if (req.method === 'POST' && urlPath === '/media/upload') {
-    const MAX_SIZE = 100 * 1024 * 1024;
+if (req.method === 'POST' && urlPath === '/media/upload-to-astra') {
     let body = '';
-    let totalSize = 0;
-    let tooLarge = false;
-
-    req.on('data', chunk => {
-      totalSize += chunk.length;
-      if (totalSize > MAX_SIZE) { tooLarge = true; req.destroy(); return; }
-      body += chunk.toString();
-    });
-
-    req.on('end', () => {
-      if (tooLarge) {
-        res.writeHead(413); res.end(JSON.stringify({ error: 'Файл превышает 100 МБ' })); return;
-      }
+    req.on('data', chunk => { body += chunk.toString(); });
+    req.on('end', async () => {
       try {
-        const { entityId, mediaType, fileName, base64Data } = JSON.parse(body);
-
-        if (!entityId || !mediaType || !base64Data) {
+        const { token, fileName, mimeType, mediaType, base64Data } = JSON.parse(body);
+        if (!token || !fileName || !base64Data || !mediaType) {
           res.writeHead(400); res.end(JSON.stringify({ error: 'Не хватает полей' })); return;
         }
 
+        // Шаг 1: получить presigned URL от AstraMap (от имени пользователя)
+        const presignRes = await fetch(
+          `https://center.astramaps.ru/go/presigned?${new URLSearchParams({ fileName })}`,
+          { headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } }
+        );
+        if (!presignRes.ok) {
+          const txt = await presignRes.text();
+          res.writeHead(502); res.end(JSON.stringify({ error: `presigned ${presignRes.status}: ${txt}` })); return;
+        }
+        const { presignedRequest, permanentURL } = await presignRes.json();
+
+        // Шаг 2: PUT файл в S3 (серверная сторона — нет ограничений браузера)
         const fileBuffer = Buffer.from(base64Data, 'base64');
-        const origExt    = path.extname(fileName || '').toLowerCase() || (mediaType === 'photo' ? '.jpg' : '.mp4');
-        const safeName   = `${entityId}_${mediaType}${origExt}`;
-        const destPath   = path.join(MEDIA_DIR, safeName);
-
-        fs.writeFileSync(destPath, fileBuffer);
-        log(`📁 Медиафайл сохранён: ${safeName} (${(fileBuffer.length / 1024 / 1024).toFixed(1)} МБ)`);
-
-        try {
-          if (mediaType === 'photo') {
-            db.prepare(`UPDATE targets SET has_photo=1, updated_at=datetime('now') WHERE entity_id=?`).run(String(entityId));
-          } else {
-            db.prepare(`UPDATE targets SET has_video=1, updated_at=datetime('now') WHERE entity_id=?`).run(String(entityId));
-          }
-        } catch (dbErr) {
-          log(`⚠️  SQLite update failed: ${dbErr.message}`);
+        const putRes = await fetch(presignedRequest.URL, {
+          method:  'PUT',
+          headers: {
+            'x-amz-acl':      'public-read',
+            'Content-Type':   mimeType || 'application/octet-stream',
+            'Content-Length': String(fileBuffer.length),
+          },
+          body: fileBuffer,
+          duplex: 'half',
+        });
+        if (!putRes.ok) {
+          const txt = await putRes.text();
+          res.writeHead(502); res.end(JSON.stringify({ error: `S3 PUT ${putRes.status}: ${txt}` })); return;
         }
 
+        // Формат mediaItem для AstraMap parameters["8"]
+        const mediaItem = {
+          file: { path: `./${fileName}`, relativePath: `./${fileName}` },
+          type: mediaType === 'photo' ? 'image' : 'video',
+          url:  permanentURL,
+        };
+
+        log(`📤 AstraMap медиа: ${permanentURL}`);
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, path: safeName }));
+        res.end(JSON.stringify({ ok: true, permanentURL, mediaItem }));
 
       } catch (err) {
-        log(`❌ Ошибка загрузки: ${err.message}`);
+        log(`❌ upload-to-astra: ${err.message}`);
         res.writeHead(500); res.end(JSON.stringify({ error: err.message }));
       }
     });
-
-    req.on('error', () => {
-      if (!res.headersSent) { res.writeHead(500); res.end(); }
-    });
+    req.on('error', () => { if (!res.headersSent) { res.writeHead(500); res.end(); } });
     return;
   }
 
