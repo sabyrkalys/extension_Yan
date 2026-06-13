@@ -26,15 +26,13 @@ async function uploadMediaFile(file, mediaType) {
     // same-origin → браузер автоматически добавляет Cookie, Origin, Referer
     const putRes = await fetch(presignedRequest.URL, {
       method:  'PUT',
-      headers: {
-        'Authorization': `Bearer ${token}`,   // nginx auth
-        'x-amz-acl':     'public-read',       // MinIO ACL (в SignedHeaders)
-      },
+      headers: { 'x-amz-acl': 'public-read' },  // без Authorization
       body: file,
     });
-    if (!putRes.ok) throw new Error(`S3 PUT HTTP ${putRes.status}`);
-
-    console.log(`[media] ${label} → AstraMap: ${permanentURL}`);
+    if (!putRes.ok) {
+      const errText = await putRes.text().catch(() => '');
+      throw new Error(`S3 PUT HTTP ${putRes.status}: ${errText}`);
+    }
 
     // Возвращаем объект для parameters["8"]
     return {
