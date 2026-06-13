@@ -2,28 +2,47 @@
 // Сборка главной панели расширения, кнопка на карте, инициализация UI.
 // Зависимости: store.js, wsClient.js, ui/tasks.js, ui/planning.js, ui/toast.js, utils/date.js
 
-// ── Загрузка медиафайла на сервер ─────────────────────────────────────────────
+// ── Загрузка медиафайла через background.js (обход Mixed Content) ────────────
+// Прямой fetch из content script на http:// блокируется браузером (Mixed Content).
+// Решение: конвертируем файл в base64, передаём в background service worker
+// через chrome.runtime.sendMessage — он делает fetch без ограничений.
 async function uploadMediaFile(entityId, file, mediaType) {
-  const SERVER_HTTP = 'http://186.246.2.6:5001';
-  const formData = new FormData();
-  formData.append('entity_id', String(entityId));
-  formData.append('type', mediaType);      // 'photo' или 'video'
-  formData.append('file', file, file.name);
-
   const label = mediaType === 'photo' ? 'Фото' : 'Видео';
+
   try {
-    const res = await fetch(`${SERVER_HTTP}/media/upload`, {
-      method: 'POST',
-      body: formData,
+    // Читаем файл как base64
+    const base64Data = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload  = () => resolve(reader.result.split(',')[1]); // убираем "data:...;base64,"
+      reader.onerror = () => reject(new Error('Ошибка чтения файла'));
+      reader.readAsDataURL(file);
     });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`HTTP ${res.status}: ${text}`);
+
+    // Отправляем в background.js, он делает fetch на HTTP сервер
+    const response = await new Promise((resolve) => {
+      chrome.runtime.sendMessage({
+        type:      'UPLOAD_MEDIA',
+        entityId:  String(entityId),
+        mediaType,
+        fileName:  file.name,
+        mimeType:  file.type,
+        base64Data,
+      }, (res) => {
+        if (chrome.runtime.lastError) {
+          resolve({ ok: false, error: chrome.runtime.lastError.message });
+        } else {
+          resolve(res || { ok: false, error: 'Нет ответа от background' });
+        }
+      });
+    });
+
+    if (response.ok) {
+      showToast(`✅ ${label} загружено`, 'success');
+      return true;
+    } else {
+      throw new Error(response.error || 'Неизвестная ошибка');
     }
-    const json = await res.json();
-    if (!json.ok) throw new Error(json.error || 'Ошибка сервера');
-    showToast(`✅ ${label} загружено`, 'success');
-    return true;
+
   } catch (err) {
     console.error(`[media] Ошибка загрузки ${mediaType}:`, err);
     showToast(`❌ Ошибка загрузки ${label}: ${err.message}`, 'error');

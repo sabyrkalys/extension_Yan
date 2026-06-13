@@ -3,6 +3,7 @@
 // MV3: Chrome убивает SW через ~30 сек. chrome.alarms не даёт ему умереть.
 
 const WS_URL = 'ws://186.246.2.6:5000';
+const HTTP_URL = 'http://186.246.2.6:5001';
 
 let ws = null;
 let reconnectTimer = null;
@@ -74,7 +75,6 @@ function _doConnect() {
       }
 
       // AUTH_ERROR — рассылаем только если нет ни одного авторизованного порта
-      // Это предотвращает показ ошибки авторизованным пользователям
       if (msg.type === 'AUTH_ERROR') {
         const hasAuth = [...ports].some(p => p._authenticated);
         if (!hasAuth) {
@@ -92,7 +92,6 @@ function _doConnect() {
 
   ws.onclose = () => {
     console.log('[bg] WS отключён');
-    // Сбрасываем флаг авторизации
     for (const port of ports) port._authenticated = false;
     broadcast({ type: 'WS_STATUS', status: 'disconnected' });
     if (reconnectTimer) clearTimeout(reconnectTimer);
@@ -117,7 +116,7 @@ function broadcast(msg) {
 // ── Порты от content.js ───────────────────────────────────────────────────────
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== 'ws-bridge') return;
-  port._authenticated = false; // изначально не авторизован
+  port._authenticated = false;
   ports.add(port);
   console.log('[bg] Вкладка подключилась, всего:', ports.size);
 
@@ -127,11 +126,9 @@ chrome.runtime.onConnect.addListener((port) => {
   });
 
   port.onMessage.addListener((msg) => {
-    // При отправке REGISTER сбрасываем флаг — ждём подтверждения от сервера
     if (msg.type === 'REGISTER') {
       port._authenticated = false;
     }
-
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(msg));
     } else {
@@ -162,6 +159,50 @@ chrome.tabs.onRemoved.addListener(() => {
       ws.close();
     }
   });
+});
+
+// ── Загрузка медиафайла через background (обход Mixed Content) ────────────────
+// Content script передаёт файл как base64, background делает fetch на HTTP сервер.
+async function handleMediaUpload({ entityId, mediaType, fileName, mimeType, base64Data }) {
+  try {
+    // Декодируем base64 → Blob
+    const bytes = atob(base64Data);
+    const arr   = new Uint8Array(bytes.length);
+    for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+    const blob = new Blob([arr], { type: mimeType || 'application/octet-stream' });
+
+    const formData = new FormData();
+    formData.append('entity_id', String(entityId));
+    formData.append('type', mediaType);           // 'photo' или 'video'
+    formData.append('file', blob, fileName || 'file');
+
+    const res = await fetch(`${HTTP_URL}/media/upload`, {
+      method: 'POST',
+      body:   formData,
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      return { ok: false, error: `HTTP ${res.status}: ${text}` };
+    }
+
+    const json = await res.json();
+    return json.ok ? { ok: true } : { ok: false, error: json.error || 'Ошибка сервера' };
+
+  } catch (err) {
+    console.error('[bg] Ошибка загрузки медиа:', err);
+    return { ok: false, error: err.message };
+  }
+}
+
+// ── Обработчик одноразовых сообщений от content script ───────────────────────
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === 'UPLOAD_MEDIA') {
+    handleMediaUpload(msg)
+      .then(sendResponse)
+      .catch(err => sendResponse({ ok: false, error: err.message }));
+    return true; // сигнал Chrome что ответ будет асинхронным
+  }
 });
 
 // При старте — проверяем есть ли уже открытые вкладки
