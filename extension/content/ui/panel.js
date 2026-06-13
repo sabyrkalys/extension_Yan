@@ -15,24 +15,36 @@ async function uploadMediaFile(file, mediaType) {
     if (!token) throw new Error('Токен не найден');
 
     // Шаг 1: получить presigned URL
+    // Sanitize filename — убираем кириллицу и пробелы (AstraMap генерирует ASCII ключи)
+    const safeFileName = file.name
+      .replace(/[^\x00-\x7F]/g, '')    // убрать не-ASCII (кириллица)
+      .replace(/\s+/g, '_')               // пробелы → underscore
+      .replace(/[^\w.\-]/g, '_')         // спецсимволы → underscore
+      || ('file_' + Date.now());           // fallback если имя целиком не-ASCII
+
     const presignRes = await fetch(
-      `https://center.astramaps.ru/go/presigned?${new URLSearchParams({ fileName: file.name })}`,
+      `https://center.astramaps.ru/go/presigned?${new URLSearchParams({ fileName: safeFileName })}`,
       { headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } }
     );
     if (!presignRes.ok) throw new Error(`presigned HTTP ${presignRes.status}`);
     const { presignedRequest, permanentURL } = await presignRes.json();
 
-    // Шаг 2: PUT в S3 с Authorization (как делает AstraMap frontend)
-    // same-origin → браузер автоматически добавляет Cookie, Origin, Referer
+    // Шаг 2: PUT в S3
+    // ArrayBuffer body — браузер не добавляет Content-Type (избегаем image/jpeg)
+    const fileBuffer = await file.arrayBuffer();
     const putRes = await fetch(presignedRequest.URL, {
       method:  'PUT',
-      headers: { 'x-amz-acl': 'public-read' },  // без Authorization
-      body: file,
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'x-amz-acl':     'public-read',
+      },
+      body: fileBuffer,
     });
     if (!putRes.ok) {
       const errText = await putRes.text().catch(() => '');
       throw new Error(`S3 PUT HTTP ${putRes.status}: ${errText}`);
     }
+    console.log(`[media] ${label} → AstraMap: ${permanentURL}`);
 
     // Возвращаем объект для parameters["8"]
     return {
