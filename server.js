@@ -168,6 +168,17 @@ if (req.method === 'GET' && urlPath === '/media/list') {
     });
     return;
   }
+
+  if (req.method === 'GET' && urlPath === '/targets/info') {
+    const entityId = new URL('http://x' + req.url).searchParams.get('entityId');
+    if (!entityId) { res.writeHead(400); res.end(JSON.stringify({ error: 'entityId required' })); return; }
+    const row = db.prepare(
+      `SELECT description, notes FROM targets WHERE entity_id=?`
+    ).get(String(entityId));
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, description: row?.description || '', notes: row?.notes || '' }));
+    return;
+  }
   // ── Отдача медиафайла ──────────────────────────────────────────────────
   if (req.method === 'GET' && urlPath.startsWith('/media/')) {
     const fileName = path.basename(urlPath);

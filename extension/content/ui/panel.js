@@ -88,12 +88,12 @@ async function renderGallery() {
         ${photos.length === 0
           ? '<span style="color:#aaa;font-size:12px;">нет фото</span>'
           : photos.map(m => `
-            <div data-media-id="${m.id}" style="position:relative;width:100px;height:100px;
+            <div data-media-id="${m.id}" data-slide-idx="${photos.indexOf(m)}" style="position:relative;width:100px;height:100px;
               border:1px solid #ddd;border-radius:6px;overflow:hidden;background:#f5f5f5;
-              display:flex;align-items:center;justify-content:center;cursor:pointer;">
-              <img data-filename="${m.file_name}" data-mime="${m.file_size ? 'image/jpeg' : 'image/jpeg'}"
+              display:flex;align-items:center;justify-content:center;cursor:zoom-in;">
+              <img data-filename="${m.file_name}" data-mime="image/jpeg"
                 src="" style="max-width:100%;max-height:100%;object-fit:cover;"
-                title="${m.file_name}" />
+                title="${m.file_name} — клик для просмотра" />
               <span style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.5);
                 color:white;font-size:9px;padding:2px 4px;overflow:hidden;text-overflow:ellipsis;
                 white-space:nowrap;">${m.file_name}</span>
@@ -116,9 +116,11 @@ async function renderGallery() {
               const kb = m.file_size ? ' (' + (m.file_size / 1024).toFixed(0) + ' КБ)' : '';
               return `<div style="display:flex;align-items:center;gap:8px;padding:5px 8px;
                 background:#f8f9fa;border:1px solid #dee2e6;border-radius:4px;">
-                <span>🎥</span>
-                <span style="flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;
-                  white-space:nowrap;" title="${m.file_name}">${m.file_name}${kb}</span>
+                <span style="cursor:pointer;" title="Нажмите для просмотра">🎥</span>
+                <span class="gallery-video-play" data-slide-idx="${_galleryMediaList.indexOf(m)}"
+                  style="flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;
+                  white-space:nowrap;cursor:pointer;color:#1a5276;text-decoration:underline dotted;"
+                  title="${m.file_name} — клик для воспроизведения">${m.file_name}${kb}</span>
                 <button class="gallery-del-btn" data-id="${m.id}"
                   style="background:#dc3545;color:white;border:none;border-radius:3px;
                   cursor:pointer;font-size:10px;padding:2px 7px;">✕</button>
@@ -139,6 +141,23 @@ async function renderGallery() {
     );
     if (res?.ok) img.src = `data:${mimeType};base64,${res.base64}`;
     else img.style.cssText += ';opacity:0.4;';
+  });
+
+  // Клик по фото — открыть слайдер
+  content.querySelectorAll('[data-slide-idx]').forEach(el => {
+    el.addEventListener('click', async (e) => {
+      if (e.target.classList.contains('gallery-del-btn')) return;
+      const idx = parseInt(el.getAttribute('data-slide-idx'));
+      await showSlideshow(_galleryMediaList, idx, _galleryEntityId);
+    });
+  });
+
+  // Клик по названию видео — открыть слайдер
+  content.querySelectorAll('.gallery-video-play').forEach(el => {
+    el.addEventListener('click', async () => {
+      const idx = parseInt(el.getAttribute('data-slide-idx'));
+      await showSlideshow(_galleryMediaList, idx, _galleryEntityId);
+    });
   });
 
   // Удаление
@@ -197,6 +216,143 @@ async function _galleryUploadFiles(files, mediaType) {
     }
   }
 }
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// СЛАЙДЕР МЕДИАФАЙЛОВ
+// ══════════════════════════════════════════════════════════════════════════════
+let _slideMedia    = [];   // все медиа текущей цели
+let _slideIndex    = 0;    // текущий индекс
+let _slideEntityId = null;
+let _slideDesc     = '';   // описание из AstraMap (targets.description)
+let _slideNotes    = '';   // локальное описание (targets.notes)
+let _slideBlobUrl  = null; // текущий blob URL видео (чистим при смене слайда)
+
+// Открыть слайдер начиная с указанного индекса
+async function showSlideshow(mediaList, startIndex, entityId) {
+  _slideMedia    = mediaList;
+  _slideIndex    = Math.max(0, Math.min(startIndex, mediaList.length - 1));
+  _slideEntityId = String(entityId);
+
+  const modal = document.querySelector('#mediaSlideshowModal');
+  if (!modal) return;
+  modal.style.display = 'flex';
+
+  // Загружаем описание из SQLite
+  const infoRes = await new Promise(resolve =>
+    chrome.runtime.sendMessage({ type: 'GET_TARGET_INFO', entityId: _slideEntityId }, resolve)
+  );
+  _slideDesc  = infoRes?.description || '';
+  _slideNotes = infoRes?.notes       || '';
+
+  await _renderSlide();
+}
+
+// Отрисовка текущего слайда
+async function _renderSlide() {
+  const modal = document.querySelector('#mediaSlideshowModal');
+  if (!modal || !_slideMedia.length) return;
+
+  // Очищаем предыдущий blob URL (видео)
+  if (_slideBlobUrl) { URL.revokeObjectURL(_slideBlobUrl); _slideBlobUrl = null; }
+
+  const item    = _slideMedia[_slideIndex];
+  const total   = _slideMedia.length;
+  const isFirst = _slideIndex === 0;
+  const isLast  = _slideIndex === total - 1;
+
+  // Счётчик
+  modal.querySelector('#slideCounter').textContent = `${_slideIndex + 1} / ${total}`;
+
+  // Стрелки
+  const prevBtn = modal.querySelector('#slidePrev');
+  const nextBtn = modal.querySelector('#slideNext');
+  prevBtn.style.opacity = isFirst ? '0.25' : '1';
+  prevBtn.style.cursor  = isFirst ? 'default' : 'pointer';
+  nextBtn.style.opacity = isLast  ? '0.25' : '1';
+  nextBtn.style.cursor  = isLast  ? 'default' : 'pointer';
+
+  // Точки-индикаторы
+  const dotsEl = modal.querySelector('#slideDots');
+  dotsEl.innerHTML = _slideMedia.map((m, i) => `
+    <span data-dot="${i}" style="
+      display:inline-block;width:${i===_slideIndex?'12px':'9px'};height:${i===_slideIndex?'12px':'9px'};
+      border-radius:50%;cursor:pointer;margin:0 4px;transition:0.2s;
+      background:${i===_slideIndex?'#2c7da0':'#ccc'};
+      border:${i===_slideIndex?'2px solid #1a5276':'2px solid transparent'};
+    "></span>`).join('');
+  dotsEl.querySelectorAll('[data-dot]').forEach(dot => {
+    dot.addEventListener('click', async () => {
+      _slideIndex = parseInt(dot.getAttribute('data-dot'));
+      await _renderSlide();
+    });
+  });
+
+  // Контент
+  const contentEl = modal.querySelector('#slideContent');
+  contentEl.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#888;font-size:14px;">⏳ Загружаем...</div>';
+
+  const ext     = item.file_name.split('.').pop().toLowerCase();
+  const mimeMap = {
+    jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',webp:'image/webp',
+    gif:'image/gif',bmp:'image/bmp',
+    mp4:'video/mp4',mov:'video/quicktime',avi:'video/x-msvideo',
+    webm:'video/webm',mkv:'video/x-matroska',
+  };
+  const mimeType = mimeMap[ext] || (item.media_type==='video' ? 'video/mp4' : 'image/jpeg');
+
+  const res = await new Promise(resolve =>
+    chrome.runtime.sendMessage({ type: 'GET_MEDIA_FILE', fileName: item.file_name, mimeType }, resolve)
+  );
+
+  if (!res?.ok) {
+    contentEl.innerHTML = `<div style="color:#dc3545;text-align:center;padding:20px;">❌ Ошибка загрузки: ${res?.error||''}</div>`;
+    return;
+  }
+
+  if (item.media_type === 'photo') {
+    const img = document.createElement('img');
+    img.src = `data:${mimeType};base64,${res.base64}`;
+    img.style.cssText = 'max-width:100%;max-height:100%;object-fit:contain;border-radius:4px;';
+    contentEl.innerHTML = '';
+    contentEl.appendChild(img);
+  } else {
+    // Видео: base64 → Blob URL
+    const bytes = atob(res.base64);
+    const arr   = new Uint8Array(bytes.length);
+    for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+    _slideBlobUrl = URL.createObjectURL(new Blob([arr], { type: mimeType }));
+    const video   = document.createElement('video');
+    video.controls = true;
+    video.autoplay = true;
+    video.style.cssText = 'max-width:100%;max-height:100%;border-radius:4px;background:#000;';
+    const source = document.createElement('source');
+    source.src  = _slideBlobUrl;
+    source.type = mimeType;
+    video.appendChild(source);
+    contentEl.innerHTML = '';
+    contentEl.appendChild(video);
+  }
+
+  // Описание
+  const displayDesc = _slideNotes || _slideDesc || '';
+  const descInput = modal.querySelector('#slideDescInput');
+  if (descInput) descInput.value = displayDesc;
+  const descPlaceholder = modal.querySelector('#slideDescPlaceholder');
+  if (descPlaceholder) descPlaceholder.style.display = displayDesc ? 'none' : 'block';
+}
+
+// Навигация клавиатурой
+document.addEventListener('keydown', async (e) => {
+  const modal = document.querySelector('#mediaSlideshowModal');
+  if (!modal || modal.style.display === 'none') return;
+  if (e.key === 'ArrowLeft'  && _slideIndex > 0) { _slideIndex--; await _renderSlide(); }
+  if (e.key === 'ArrowRight' && _slideIndex < _slideMedia.length - 1) { _slideIndex++; await _renderSlide(); }
+  if (e.key === 'Escape') {
+    modal.style.display = 'none';
+    if (_slideBlobUrl) { URL.revokeObjectURL(_slideBlobUrl); _slideBlobUrl = null; }
+  }
+});
 
 function createPopup() {
   if (popupElement) return popupElement;
@@ -412,6 +568,57 @@ function createPopup() {
             <input id="galleryVideoInput" type="file" accept="video/*" multiple style="display:none;" />
           </label>
           <span style="font-size:11px;color:#888;align-self:center;">Можно выбрать несколько файлов</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ Слайдер медиафайлов ═══ -->
+    <div id="mediaSlideshowModal" style="position:fixed;inset:0;background:rgba(0,0,0,0.92);display:none;
+      flex-direction:column;align-items:center;justify-content:center;z-index:10004;">
+
+      <!-- Шапка слайдера -->
+      <div style="width:100%;max-width:900px;display:flex;justify-content:space-between;
+        align-items:center;padding:8px 16px;flex-shrink:0;">
+        <span id="slideCounter" style="color:#aaa;font-size:13px;"></span>
+        <button id="slideshowCloseBtn" style="background:none;border:none;color:white;
+          font-size:32px;cursor:pointer;line-height:1;padding:0 8px;">&times;</button>
+      </div>
+
+      <!-- Основная область: стрелки + контент -->
+      <div style="display:flex;align-items:center;justify-content:center;flex:1;width:100%;
+        max-width:900px;gap:8px;min-height:0;padding:0 8px;">
+
+        <!-- Стрелка влево -->
+        <button id="slidePrev" style="flex-shrink:0;background:rgba(255,255,255,0.1);border:none;
+          color:white;font-size:32px;width:48px;height:80px;border-radius:8px;cursor:pointer;
+          transition:0.2s;display:flex;align-items:center;justify-content:center;">&#8249;</button>
+
+        <!-- Контент (фото / видео) -->
+        <div id="slideContent" style="flex:1;min-width:0;max-height:60vh;display:flex;
+          align-items:center;justify-content:center;overflow:hidden;"></div>
+
+        <!-- Стрелка вправо -->
+        <button id="slideNext" style="flex-shrink:0;background:rgba(255,255,255,0.1);border:none;
+          color:white;font-size:32px;width:48px;height:80px;border-radius:8px;cursor:pointer;
+          transition:0.2s;display:flex;align-items:center;justify-content:center;">&#8250;</button>
+      </div>
+
+      <!-- Точки-индикаторы -->
+      <div id="slideDots" style="padding:10px 0;flex-shrink:0;"></div>
+
+      <!-- Описание -->
+      <div style="width:100%;max-width:900px;padding:8px 16px 16px;flex-shrink:0;">
+        <div style="background:rgba(255,255,255,0.07);border-radius:8px;padding:10px 12px;">
+          <div style="font-size:11px;color:#888;margin-bottom:6px;">Описание объекта:</div>
+          <div style="display:flex;gap:8px;align-items:flex-start;">
+            <textarea id="slideDescInput" rows="2" placeholder="Введите описание объекта..."
+              style="flex:1;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);
+              border-radius:6px;color:white;padding:6px 8px;font-size:13px;resize:none;
+              font-family:system-ui,sans-serif;"></textarea>
+            <button id="slideDescSaveBtn" style="padding:6px 14px;background:#2c7da0;color:white;
+              border:none;border-radius:6px;cursor:pointer;font-size:12px;white-space:nowrap;
+              align-self:flex-end;">💾 Сохранить</button>
+          </div>
         </div>
       </div>
     </div>
@@ -659,6 +866,39 @@ function createPopup() {
   todayBtn.addEventListener('click', withLock(todayBtn, async () => {
     await loadByDateFromPanel(getMoscowDateStr());
   }, { label: '⏳' }));
+
+
+  // ── Слайдер: навигация ────────────────────────────────────────────────────
+  const ssModal = popupElement.querySelector('#mediaSlideshowModal');
+
+  popupElement.querySelector('#slideshowCloseBtn').addEventListener('click', () => {
+    ssModal.style.display = 'none';
+    if (_slideBlobUrl) { URL.revokeObjectURL(_slideBlobUrl); _slideBlobUrl = null; }
+  });
+
+  popupElement.querySelector('#slidePrev').addEventListener('click', async () => {
+    if (_slideIndex > 0) { _slideIndex--; await _renderSlide(); }
+  });
+
+  popupElement.querySelector('#slideNext').addEventListener('click', async () => {
+    if (_slideIndex < _slideMedia.length - 1) { _slideIndex++; await _renderSlide(); }
+  });
+
+  // Сохранить описание
+  popupElement.querySelector('#slideDescSaveBtn').addEventListener('click', async () => {
+    const notes = popupElement.querySelector('#slideDescInput').value.trim();
+    _slideNotes = notes;
+    wsSend({ type: 'UPDATE_TARGET_LOCAL', entity_id: _slideEntityId, notes });
+    showToast('✅ Описание сохранено', 'success');
+  });
+
+  // Закрыть по клику на фон
+  ssModal.addEventListener('click', (e) => {
+    if (e.target === ssModal) {
+      ssModal.style.display = 'none';
+      if (_slideBlobUrl) { URL.revokeObjectURL(_slideBlobUrl); _slideBlobUrl = null; }
+    }
+  });
 
   return popupElement;
 }
