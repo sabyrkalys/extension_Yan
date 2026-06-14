@@ -186,6 +186,64 @@ async function handleGetMediaFile({ fileName, mimeType }) {
   }
 }
 
+
+// ── Потоковая передача видео (port-based) ─────────────────────────────────────
+// Используем долгосрочное соединение (port) для передачи прогресса и данных.
+// Это позволяет показывать прогресс загрузки большого видео.
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== 'video-stream') return;
+
+  port.onMessage.addListener(async ({ fileName, mimeType }) => {
+    try {
+      const res = await fetch(`${HTTP_URL}/media/${encodeURIComponent(fileName)}`);
+      if (!res.ok) { port.postMessage({ type: 'ERROR', error: `HTTP ${res.status}` }); return; }
+
+      const total  = parseInt(res.headers.get('content-length') || '0');
+      const reader = res.body.getReader();
+      const chunks = [];
+      let received = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        received += value.length;
+        const progress = total ? Math.round(received / total * 100) : -1;
+        try { port.postMessage({ type: 'PROGRESS', progress, received, total }); } catch {}
+      }
+
+      // Собираем все чанки в один буфер
+      const combined = new Uint8Array(received);
+      let offset = 0;
+      for (const chunk of chunks) { combined.set(chunk, offset); offset += chunk.length; }
+
+      // base64 по частям (избегаем переполнение стека при больших файлах)
+      let binary = '';
+      const CHUNK = 8192;
+      for (let i = 0; i < combined.length; i += CHUNK) {
+        binary += String.fromCharCode(...combined.subarray(i, i + CHUNK));
+      }
+
+      try { port.postMessage({ type: 'DONE', base64: btoa(binary), mimeType }); } catch {}
+    } catch (err) {
+      try { port.postMessage({ type: 'ERROR', error: err.message }); } catch {}
+    }
+  });
+});
+
+// ── Количество медиафайлов для группы целей ───────────────────────────────────
+async function handleGetMediaCounts({ entityIds }) {
+  try {
+    const ids = (entityIds || []).filter(Boolean).join(',');
+    if (!ids) return { ok: true, counts: {} };
+    const res = await fetch(`${HTTP_URL}/media/counts?entityIds=${encodeURIComponent(ids)}`);
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+    return await res.json();
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
 // ── Обработчик одноразовых сообщений от content script ───────────────────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'UPLOAD_MEDIA') {
@@ -198,6 +256,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'DELETE_MEDIA') {
     handleDeleteMedia(msg).then(sendResponse).catch(err => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+  if (msg.type === 'GET_MEDIA_COUNTS') {
+    handleGetMediaCounts(msg).then(sendResponse).catch(err => sendResponse({ ok: false, error: err.message }));
     return true;
   }
   if (msg.type === 'GET_TARGET_INFO') {

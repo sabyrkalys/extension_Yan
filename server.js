@@ -179,6 +179,25 @@ if (req.method === 'GET' && urlPath === '/media/list') {
     res.end(JSON.stringify({ ok: true, description: row?.description || '', notes: row?.notes || '' }));
     return;
   }
+  if (req.method === 'GET' && urlPath === '/media/counts') {
+    const raw = new URL('http://x' + req.url).searchParams.get('entityIds');
+    if (!raw) { res.writeHead(400); res.end('{}'); return; }
+    const ids    = raw.split(',').filter(Boolean);
+    const counts = {};
+    for (const id of ids) {
+      const rows = db.prepare(
+        `SELECT media_type, COUNT(*) as cnt FROM target_media WHERE entity_id=? GROUP BY media_type`
+      ).all(id);
+      counts[id] = { photo: 0, video: 0 };
+      for (const r of rows) {
+        if (r.media_type === 'photo') counts[id].photo = r.cnt;
+        else if (r.media_type === 'video') counts[id].video = r.cnt;
+      }
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, counts }));
+    return;
+  }
   // ── Отдача медиафайла ──────────────────────────────────────────────────
   if (req.method === 'GET' && urlPath.startsWith('/media/')) {
     const fileName = path.basename(urlPath);

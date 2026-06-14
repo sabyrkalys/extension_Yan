@@ -840,8 +840,33 @@ function populateTable(dataArray) {
     }, { label: '⏳ Отправка...' }));
     cellForm.appendChild(btnForm);
   });
+  // Асинхронно загружаем количество медиафайлов
+  setTimeout(() => loadMediaCountsAsync(), 300);
 }
+// Асинхронная загрузка количества медиафайлов для всех строк таблицы
+async function loadMediaCountsAsync() {
+  const rows = document.querySelectorAll('#statusTable tbody tr[data-target-id]');
+  if (!rows.length) return;
 
+  const entityIds = [...rows].map(r => r.getAttribute('data-target-id')).filter(Boolean);
+  if (!entityIds.length) return;
+
+  const response = await new Promise(resolve =>
+    chrome.runtime.sendMessage({ type: 'GET_MEDIA_COUNTS', entityIds }, resolve)
+  );
+  if (!response?.ok || !response.counts) return;
+
+  const counts = response.counts;
+  for (const [entityId, cnt] of Object.entries(counts)) {
+    _mediaFlags[entityId + '_photo']       = cnt.photo > 0;
+    _mediaFlags[entityId + '_video']       = cnt.video > 0;
+    _mediaFlags[entityId + '_photo_count'] = cnt.photo;
+    _mediaFlags[entityId + '_video_count'] = cnt.video;
+
+    const row = document.querySelector(`#statusTable tr[data-target-id="${entityId}"]`);
+    if (row) _applyMediaFlags(row, entityId);
+  }
+}
 // ======================== ИНТЕРВАЛЫ ========================
 let attemptsClose = 0;
 const intervalClose = setInterval(() => {

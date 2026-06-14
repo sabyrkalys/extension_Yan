@@ -172,12 +172,16 @@ function _applyMediaFlags(row, entityId) {
   if (!mediaWrap) return;
   mediaWrap.querySelectorAll('button[data-media]').forEach(btn => {
     const mediaType = btn.dataset.media;
-    const on = !!_mediaFlags[entityId + '_' + mediaType];
+    const on    = !!_mediaFlags[entityId + '_' + mediaType];
+    const count = _mediaFlags[entityId + '_' + mediaType + '_count'] || 0;
+    const emoji = mediaType === 'photo' ? '📷' : '🎥';
+
+    btn.innerHTML = count > 0 ? `${emoji} <span style="font-size:9px;">${count}</span>` : emoji;
+    btn.title     = on
+      ? `${mediaType === 'photo' ? 'Фото' : 'Видео'}: ${count} шт. — клик для галереи`
+      : `Нет ${mediaType === 'photo' ? 'фото' : 'видео'} — клик для добавления`;
     btn.style.background = on ? '#28a745' : '#dee2e6';
     btn.style.color      = on ? 'white'   : '#aaa';
     btn.style.opacity    = on ? '1'       : '0.6';
-    btn.title = on
-      ? `${mediaType === 'photo' ? 'Фото' : 'Видео'} загружено`
-      : `${mediaType === 'photo' ? 'Фото' : 'Видео'} нет`;
   });
 }

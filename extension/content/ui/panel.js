@@ -248,6 +248,71 @@ async function showSlideshow(mediaList, startIndex, entityId) {
   await _renderSlide();
 }
 
+
+// ── Плашка для видео (lazy loading) ──────────────────────────────────────────
+function _renderVideoPlaceholder(contentEl, item, mimeType) {
+  const sizeMb = item.file_size ? (item.file_size / 1024 / 1024).toFixed(1) + ' МБ' : '';
+  contentEl.innerHTML = `
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
+      color:white;padding:30px;text-align:center;width:100%;box-sizing:border-box;">
+      <div style="font-size:64px;margin-bottom:12px;">🎥</div>
+      <div style="font-size:14px;margin-bottom:4px;max-width:420px;word-break:break-all;opacity:0.9;">${item.file_name}</div>
+      ${sizeMb ? `<div style="font-size:12px;color:#aaa;margin-bottom:20px;">${sizeMb}</div>` : '<div style="margin-bottom:20px;"></div>'}
+      <button id="videoPlayBtn" style="padding:12px 32px;background:#2c7da0;color:white;
+        border:none;border-radius:10px;cursor:pointer;font-size:17px;font-weight:700;
+        letter-spacing:1px;box-shadow:0 4px 16px rgba(44,125,160,0.5);">▶ Воспроизвести</button>
+      <div id="videoProgressWrap" style="display:none;width:100%;max-width:360px;margin-top:20px;">
+        <div style="background:rgba(255,255,255,0.15);border-radius:8px;height:10px;overflow:hidden;margin-bottom:8px;">
+          <div id="videoProgressBar" style="height:100%;background:#2c7da0;width:0%;border-radius:8px;transition:width 0.3s;"></div>
+        </div>
+        <div id="videoProgressText" style="font-size:12px;color:#bbb;text-align:center;">Загружаем...</div>
+      </div>
+    </div>`;
+
+  contentEl.querySelector('#videoPlayBtn').addEventListener('click', () => {
+    contentEl.querySelector('#videoPlayBtn').style.display  = 'none';
+    contentEl.querySelector('#videoProgressWrap').style.display = 'block';
+
+    const port = chrome.runtime.connect({ name: 'video-stream' });
+    port.postMessage({ fileName: item.file_name, mimeType });
+
+    port.onMessage.addListener((msg) => {
+      if (msg.type === 'PROGRESS') {
+        const pct  = msg.progress >= 0 ? msg.progress : 0;
+        const bar  = contentEl.querySelector('#videoProgressBar');
+        const txt  = contentEl.querySelector('#videoProgressText');
+        if (bar) bar.style.width = Math.max(pct, 5) + '%';
+        if (txt) txt.textContent = msg.progress >= 0
+          ? `${msg.progress}% — ${(msg.received/1024/1024).toFixed(1)} МБ из ${(msg.total/1024/1024).toFixed(1)} МБ`
+          : `Загружаем... ${(msg.received/1024/1024).toFixed(1)} МБ`;
+
+      } else if (msg.type === 'DONE') {
+        port.disconnect();
+        const bytes = atob(msg.base64);
+        const arr   = new Uint8Array(bytes.length);
+        for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+        if (_slideBlobUrl) URL.revokeObjectURL(_slideBlobUrl);
+        _slideBlobUrl = URL.createObjectURL(new Blob([arr], { type: msg.mimeType }));
+
+        contentEl.innerHTML = '';
+        const video   = document.createElement('video');
+        video.controls = true;
+        video.autoplay = true;
+        video.style.cssText = 'max-width:100%;max-height:100%;border-radius:4px;background:#000;';
+        const source  = document.createElement('source');
+        source.src    = _slideBlobUrl;
+        source.type   = msg.mimeType;
+        video.appendChild(source);
+        contentEl.appendChild(video);
+
+      } else if (msg.type === 'ERROR') {
+        port.disconnect();
+        contentEl.innerHTML = `<div style="color:#dc3545;text-align:center;padding:20px;">❌ ${msg.error}</div>`;
+      }
+    });
+  });
+}
+
 // Отрисовка текущего слайда
 async function _renderSlide() {
   const modal = document.querySelector('#mediaSlideshowModal');
@@ -301,6 +366,17 @@ async function _renderSlide() {
   };
   const mimeType = mimeMap[ext] || (item.media_type==='video' ? 'video/mp4' : 'image/jpeg');
 
+  // Видео — не загружаем заранее, lazy loading через кнопку ▶
+  if (item.media_type === 'video') {
+    _renderVideoPlaceholder(contentEl, item, mimeType);
+    // Обновляем описание
+    const displayDesc = _slideNotes || _slideDesc || '';
+    const descInput = document.querySelector('#slideDescInput');
+    if (descInput) descInput.value = displayDesc;
+    return;
+  }
+
+  // Фото — загружаем сразу
   const res = await new Promise(resolve =>
     chrome.runtime.sendMessage({ type: 'GET_MEDIA_FILE', fileName: item.file_name, mimeType }, resolve)
   );
@@ -316,23 +392,7 @@ async function _renderSlide() {
     img.style.cssText = 'max-width:100%;max-height:100%;object-fit:contain;border-radius:4px;';
     contentEl.innerHTML = '';
     contentEl.appendChild(img);
-  } else {
-    // Видео: base64 → Blob URL
-    const bytes = atob(res.base64);
-    const arr   = new Uint8Array(bytes.length);
-    for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
-    _slideBlobUrl = URL.createObjectURL(new Blob([arr], { type: mimeType }));
-    const video   = document.createElement('video');
-    video.controls = true;
-    video.autoplay = true;
-    video.style.cssText = 'max-width:100%;max-height:100%;border-radius:4px;background:#000;';
-    const source = document.createElement('source');
-    source.src  = _slideBlobUrl;
-    source.type = mimeType;
-    video.appendChild(source);
-    contentEl.innerHTML = '';
-    contentEl.appendChild(video);
-  }
+  } // end photo
 
   // Описание
   const displayDesc = _slideNotes || _slideDesc || '';
@@ -721,6 +781,11 @@ function createPopup() {
         }
         if (hasPhoto || hasVideo) {
           wsSend({ type: 'UPDATE_TARGET_LOCAL', entity_id: String(newEntityId), has_photo: hasPhoto, has_video: hasVideo });
+          // Сразу обновляем кнопки в строке таблицы (не ждём TARGETS_SYNCED)
+          if (hasPhoto) _mediaFlags[String(newEntityId) + '_photo'] = true;
+          if (hasVideo) _mediaFlags[String(newEntityId) + '_video'] = true;
+          const newRow = document.querySelector(`#statusTable tr[data-target-id="${newEntityId}"]`);
+          if (newRow && typeof _applyMediaFlags === 'function') _applyMediaFlags(newRow, String(newEntityId));
         }
       }
 
