@@ -721,44 +721,34 @@ function populateTable(dataArray) {
     btnView.title  = 'Просмотр в AstraMap';
     btnView.style.cssText = 'display:inline-block;padding:3px 7px;background:#2c7da0;color:white;border-radius:4px;font-size:14px;text-decoration:none;';
 
-    // Медиа-индикаторы — маленькие
-    const hasPhoto = !!_mediaFlags[targetEntityId + '_photo'];
-    const hasVideo = !!_mediaFlags[targetEntityId + '_video'];
-
-    const makeMediaBtn = (type, emoji, flagKey, mediaType) => {
+    // Кнопки медиа — открывают галерею, показывают наличие
+    const makeMediaBtn = (emoji, mediaType) => {
       const btn = document.createElement('button');
-      const on  = !!_mediaFlags[flagKey];
-      btn.innerHTML     = emoji;
-      btn.title         = on ? `${type} загружено` : `${type} нет`;
-      btn.dataset.media = mediaType; // 'photo' или 'video' — для wsHandlers
-      btn.style.cssText = `font-size:10px;padding:1px 4px;border:none;border-radius:3px;cursor:pointer;
+      btn.dataset.media = mediaType;  // для _applyMediaFlags
+      const on = !!_mediaFlags[targetEntityId + '_' + mediaType];
+      btn.innerHTML = emoji;
+      btn.title = on
+        ? `Есть ${mediaType === 'photo' ? 'фото' : 'видео'} — клик для галереи`
+        : `Нет ${mediaType === 'photo' ? 'фото' : 'видео'} — клик для добавления`;
+      btn.style.cssText = `font-size:10px;padding:1px 4px;border:none;border-radius:3px;
+        cursor:pointer;transition:0.15s;
         background:${on ? '#28a745' : '#dee2e6'};
         color:${on ? 'white' : '#aaa'};
         opacity:${on ? '1' : '0.6'};`;
-      btn.addEventListener('click', () => {
-        const nowOn = !_mediaFlags[flagKey];
-        _mediaFlags[flagKey] = nowOn;
-        btn.title            = nowOn ? `${type} загружено` : `${type} нет`;
-        btn.style.background = nowOn ? '#28a745' : '#dee2e6';
-        btn.style.color      = nowOn ? 'white'    : '#aaa';
-        btn.style.opacity    = nowOn ? '1'        : '0.6';
-        // Сохраняем в SQLite через WS
-        const isPhoto = mediaType === 'photo';
-        wsSend({
-          type:      'UPDATE_TARGET_LOCAL',
-          entity_id: targetEntityId,
-          has_photo: isPhoto  ? (nowOn ? 1 : 0) : undefined,
-          has_video: !isPhoto ? (nowOn ? 1 : 0) : undefined,
-        });
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (typeof showMediaGallery === 'function') {
+          showMediaGallery(targetEntityId, item.characteristic || '');
+        }
       });
       return btn;
     };
 
     const mediaWrap = document.createElement('div');
-    mediaWrap.classList.add('media-btns'); // класс для поиска в wsHandlers
+    mediaWrap.classList.add('media-btns');
     mediaWrap.style.cssText = 'display:flex;gap:3px;justify-content:center;margin-top:3px;';
-    mediaWrap.appendChild(makeMediaBtn('Фото',  '📷', targetEntityId + '_photo', 'photo'));
-    mediaWrap.appendChild(makeMediaBtn('Видео', '🎥', targetEntityId + '_video', 'video'));
+    mediaWrap.appendChild(makeMediaBtn('📷', 'photo'));
+    mediaWrap.appendChild(makeMediaBtn('🎥', 'video'));
 
     cellView.appendChild(btnView);
     cellView.appendChild(mediaWrap);

@@ -1,8 +1,7 @@
 // background.js — фоновый service worker расширения.
-// Не имеет ограничений Mixed Content — подключается к ws:// с HTTPS страниц.
-// MV3: Chrome убивает SW через ~30 сек. chrome.alarms не даёт ему умереть.
+// Не имеет ограничений Mixed Content — подключается к ws:// и http:// с HTTPS страниц.
 
-const WS_URL = 'ws://186.246.2.6:5000';
+const WS_URL   = 'ws://186.246.2.6:5000';
 const HTTP_URL = 'http://186.246.2.6:5001';
 
 let ws = null;
@@ -17,17 +16,13 @@ function hasAstramapsTabs(callback) {
 }
 
 // ── Keep-alive (MV3) ─────────────────────────────────────────────────────────
-chrome.alarms.create('wsKeepAlive', { periodInMinutes: 0.33 }); // ~20 сек
+chrome.alarms.create('wsKeepAlive', { periodInMinutes: 0.33 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name !== 'wsKeepAlive') return;
-
   hasAstramapsTabs((hasTabs) => {
     if (!hasTabs) {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        console.log('[bg] Нет вкладок astramaps — закрываем WS');
-        ws.close();
-      }
+      if (ws && ws.readyState === WebSocket.OPEN) ws.close();
       return;
     }
     if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
@@ -39,20 +34,14 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 // ── WebSocket ─────────────────────────────────────────────────────────────────
 function connectWS() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
-
   hasAstramapsTabs((hasTabs) => {
-    if (!hasTabs) {
-      console.log('[bg] Нет вкладок astramaps — пропускаем подключение');
-      return;
-    }
+    if (!hasTabs) return;
     _doConnect();
   });
 }
 
 function _doConnect() {
   console.log('[bg] Подключаемся к', WS_URL);
-
-  // Сбрасываем флаг авторизации на всех портах при новом подключении
   for (const port of ports) port._authenticated = false;
 
   ws = new WebSocket(WS_URL);
@@ -65,27 +54,16 @@ function _doConnect() {
   ws.onmessage = (event) => {
     try {
       const msg = JSON.parse(event.data);
-
-      // REGISTERED — помечаем все порты как авторизованные
       if (msg.type === 'REGISTERED') {
         for (const port of ports) port._authenticated = true;
-        console.log('[bg] Авторизация подтверждена');
         broadcast(msg);
         return;
       }
-
-      // AUTH_ERROR — рассылаем только если нет ни одного авторизованного порта
       if (msg.type === 'AUTH_ERROR') {
         const hasAuth = [...ports].some(p => p._authenticated);
-        if (!hasAuth) {
-          console.warn('[bg] AUTH_ERROR — нет авторизованных портов, рассылаем');
-          broadcast(msg);
-        } else {
-          console.warn('[bg] AUTH_ERROR — есть авторизованные порты, игнорируем');
-        }
+        if (!hasAuth) broadcast(msg);
         return;
       }
-
       broadcast(msg);
     } catch {}
   };
@@ -96,15 +74,11 @@ function _doConnect() {
     broadcast({ type: 'WS_STATUS', status: 'disconnected' });
     if (reconnectTimer) clearTimeout(reconnectTimer);
     reconnectTimer = setTimeout(() => {
-      hasAstramapsTabs((hasTabs) => {
-        if (hasTabs) _doConnect();
-      });
+      hasAstramapsTabs((hasTabs) => { if (hasTabs) _doConnect(); });
     }, 2000);
   };
 
-  ws.onerror = (err) => {
-    console.error('[bg] WS ошибка:', err);
-  };
+  ws.onerror = (err) => console.error('[bg] WS ошибка:', err);
 }
 
 function broadcast(msg) {
@@ -118,7 +92,6 @@ chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== 'ws-bridge') return;
   port._authenticated = false;
   ports.add(port);
-  console.log('[bg] Вкладка подключилась, всего:', ports.size);
 
   port.postMessage({
     type:   'WS_STATUS',
@@ -126,91 +99,89 @@ chrome.runtime.onConnect.addListener((port) => {
   });
 
   port.onMessage.addListener((msg) => {
-    if (msg.type === 'REGISTER') {
-      port._authenticated = false;
-    }
+    if (msg.type === 'REGISTER') port._authenticated = false;
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(msg));
-    } else {
-      console.warn('[bg] WS не подключён:', msg.type);
     }
   });
 
-  port.onDisconnect.addListener(() => {
-    ports.delete(port);
-    console.log('[bg] Вкладка отключилась, осталось:', ports.size);
-  });
+  port.onDisconnect.addListener(() => ports.delete(port));
 });
 
-// ── При открытии вкладки astramaps — подключаемся ────────────────────────────
+// ── При открытии вкладки astramaps ────────────────────────────────────────────
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.status === 'complete' &&
-      tab.url?.startsWith('https://center.astramaps.ru')) {
-    console.log('[bg] Открылась вкладка astramaps — подключаемся');
+  if (changeInfo.status === 'complete' && tab.url?.startsWith('https://center.astramaps.ru')) {
     connectWS();
   }
 });
 
-// ── При закрытии последней вкладки astramaps — отключаемся ───────────────────
 chrome.tabs.onRemoved.addListener(() => {
   hasAstramapsTabs((hasTabs) => {
-    if (!hasTabs && ws && ws.readyState === WebSocket.OPEN) {
-      console.log('[bg] Все вкладки astramaps закрыты — отключаемся');
-      ws.close();
-    }
+    if (!hasTabs && ws && ws.readyState === WebSocket.OPEN) ws.close();
   });
 });
 
-// ── Загрузка медиафайла через chrome.scripting.executeScript (MAIN world) ────
-// chrome.scripting.executeScript с world:'MAIN' выполняет код в контексте страницы
-// — с полными cookies и сессией. Это официальный способ обойти изоляцию.
-// background.js получает presignedUrl + base64 от content script,
-// инжектирует PUT-запрос в MAIN world вкладки с center.astramaps.ru.
-async function handleMediaUpload({ presignedUrl, mimeType, base64Data, token }, tabId) {
+// ── Медиа: загрузка файла на VPS (JSON + base64) ──────────────────────────────
+// HTTP запрос из background.js не имеет Mixed Content ограничений.
+async function handleMediaUpload({ entityId, mediaType, fileName, mimeType, base64Data }) {
   try {
-    if (!tabId) throw new Error('tabId не определён');
-
-    // Выполняем PUT в MAIN world страницы:
-    // — fetch в MAIN world имеет Sec-Fetch-Site: same-origin
-    // — nginx видит Authorization + same-origin → стрипает Authorization → передаёт в MinIO
-    // — MinIO валидирует presigned URL подпись → 200 OK
-    const results = await chrome.scripting.executeScript({
-      target: { tabId },
-      world:  'MAIN',
-      func:   async (url, b64, mime, tok) => {
-        try {
-          const bytes = atob(b64);
-          const arr   = new Uint8Array(bytes.length);
-          for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
-
-          // Без Authorization — nginx принимает запрос по session cookie
-          // (MAIN world автоматически включает cookies страницы)
-          const res = await fetch(url, {
-            method:  'PUT',
-            headers: { 'x-amz-acl': 'public-read' },
-            body:    arr.buffer,
-          });
-
-          let errText = '';
-          if (!res.ok) {
-            try { errText = await res.text(); } catch {}
-          }
-          return { ok: res.ok, status: res.status, errText };
-        } catch (e) {
-          return { ok: false, error: e.message };
-        }
-      },
-      args: [presignedUrl, base64Data, mimeType, token],
+    const res = await fetch(`${HTTP_URL}/media/upload`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ entityId, mediaType, fileName, mimeType, base64Data }),
     });
-
-    const result = results?.[0]?.result;
-    if (!result?.ok) {
-      return { ok: false, error: `S3 PUT HTTP ${result?.status || '?'}: ${result?.errText || result?.error || ''}` };
+    if (!res.ok) {
+      const text = await res.text();
+      return { ok: false, error: `HTTP ${res.status}: ${text}` };
     }
-    return { ok: true };
-
+    return await res.json(); // { ok: true, fileName, id }
   } catch (err) {
-    console.error('[bg] executeScript error:', err);
+    console.error('[bg] Ошибка загрузки медиа:', err);
+    return { ok: false, error: err.message };
+  }
+}
+
+// ── Медиа: получить список файлов цели ────────────────────────────────────────
+async function handleGetMediaList({ entityId }) {
+  try {
+    const res = await fetch(`${HTTP_URL}/media/list?entityId=${encodeURIComponent(entityId)}`);
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+    return await res.json(); // { ok: true, media: [...] }
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+// ── Медиа: удалить файл ───────────────────────────────────────────────────────
+async function handleDeleteMedia({ id }) {
+  try {
+    const res = await fetch(`${HTTP_URL}/media/delete`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ id }),
+    });
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+    return await res.json();
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+// ── Медиа: получить файл как base64 (для показа на HTTPS странице) ────────────
+async function handleGetMediaFile({ fileName, mimeType }) {
+  try {
+    const res = await fetch(`${HTTP_URL}/media/${encodeURIComponent(fileName)}`);
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+    const buf   = await res.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    let binary  = '';
+    // Конвертируем по кускам чтобы не переполнить стек
+    const CHUNK = 8192;
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+    }
+    return { ok: true, base64: btoa(binary), mimeType: mimeType || 'application/octet-stream' };
+  } catch (err) {
     return { ok: false, error: err.message };
   }
 }
@@ -218,13 +189,21 @@ async function handleMediaUpload({ presignedUrl, mimeType, base64Data, token }, 
 // ── Обработчик одноразовых сообщений от content script ───────────────────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'UPLOAD_MEDIA') {
-    const tabId = sender.tab?.id;
-    handleMediaUpload(msg, tabId)
-      .then(sendResponse)
-      .catch(err => sendResponse({ ok: false, error: err.message }));
-    return true; // сигнал Chrome что ответ будет асинхронным
+    handleMediaUpload(msg).then(sendResponse).catch(err => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+  if (msg.type === 'GET_MEDIA_LIST') {
+    handleGetMediaList(msg).then(sendResponse).catch(err => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+  if (msg.type === 'DELETE_MEDIA') {
+    handleDeleteMedia(msg).then(sendResponse).catch(err => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+  if (msg.type === 'GET_MEDIA_FILE') {
+    handleGetMediaFile(msg).then(sendResponse).catch(err => sendResponse({ ok: false, error: err.message }));
+    return true;
   }
 });
 
-// При старте — проверяем есть ли уже открытые вкладки
 connectWS();

@@ -1,34 +1,10 @@
 // content/ui/panel.js
-// Сборка главной панели расширения, кнопка на карте, инициализация UI.
-// Зависимости: store.js, wsClient.js, ui/tasks.js, ui/planning.js, ui/toast.js, utils/date.js
 
-// ── Загрузка медиафайла в AstraMap ────────────────────────────────────────────
-// Проблема: content script имеет Sec-Fetch-Site != same-origin.
-// nginx стрипает Authorization только для same-origin запросов (страница).
-// Решение: chrome.scripting.executeScript(world:'MAIN') — код запускается
-// в контексте страницы → Sec-Fetch-Site: same-origin → nginx стрипает Auth
-// → MinIO валидирует presigned URL → 200 OK.
-async function uploadMediaFile(file, mediaType) {
+// ── Загрузка медиафайла на VPS через background.js ────────────────────────────
+// background.js делает HTTP запрос (нет Mixed Content). Файл → base64 → JSON → VPS.
+async function uploadMediaFile(entityId, file, mediaType) {
   const label = mediaType === 'photo' ? 'Фото' : 'Видео';
   try {
-    const token = getToken();
-    if (!token) throw new Error('Токен не найден');
-
-    // Шаг 1: presigned URL (этот запрос — обычный API, работает из content script)
-    const safeFileName = file.name
-      .replace(/[^\x00-\x7F]/g, '')
-      .replace(/\s+/g, '_')
-      .replace(/[^\w.\-]/g, '_')
-      || ('file_' + Date.now());
-
-    const presignRes = await fetch(
-      `https://center.astramaps.ru/go/presigned?${new URLSearchParams({ fileName: safeFileName })}`,
-      { headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } }
-    );
-    if (!presignRes.ok) throw new Error(`presigned HTTP ${presignRes.status}`);
-    const { presignedRequest, permanentURL } = await presignRes.json();
-
-    // Шаг 2: файл → base64 для передачи через sendMessage
     const base64Data = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload  = () => resolve(reader.result.split(',')[1]);
@@ -36,44 +12,191 @@ async function uploadMediaFile(file, mediaType) {
       reader.readAsDataURL(file);
     });
 
-    // Шаг 3: PUT через background → executeScript(world:'MAIN')
-    // В MAIN world fetch имеет Sec-Fetch-Site: same-origin
-    // → nginx стрипает Authorization → MinIO видит только presigned URL → 200 OK
     const response = await new Promise((resolve) => {
       chrome.runtime.sendMessage({
-        type:         'UPLOAD_MEDIA',
-        presignedUrl: presignedRequest.URL,
-        permanentURL,
+        type:      'UPLOAD_MEDIA',
+        entityId:  String(entityId),
         mediaType,
-        fileName:     safeFileName,
-        mimeType:     file.type || 'application/octet-stream',
+        fileName:  file.name,
+        mimeType:  file.type || 'application/octet-stream',
         base64Data,
-        token,
       }, (res) => {
-        if (chrome.runtime.lastError) {
-          resolve({ ok: false, error: chrome.runtime.lastError.message });
-        } else {
-          resolve(res || { ok: false, error: 'Нет ответа от background' });
-        }
+        if (chrome.runtime.lastError) resolve({ ok: false, error: chrome.runtime.lastError.message });
+        else resolve(res || { ok: false, error: 'Нет ответа' });
       });
     });
 
-    if (!response.ok) throw new Error(response.error || 'Ошибка загрузки');
-
-    console.log(`[media] ${label} → AstraMap: ${permanentURL}`);
-    return {
-      file: { path: `./${safeFileName}`, relativePath: `./${safeFileName}` },
-      type: mediaType === 'photo' ? 'image' : 'video',
-      url:  permanentURL,
-    };
-
+    if (response.ok) {
+      showToast(`✅ ${label} загружено`, 'success');
+      return true;
+    } else {
+      throw new Error(response.error || 'Ошибка');
+    }
   } catch (err) {
     console.error(`[media] Ошибка ${mediaType}:`, err);
     showToast(`❌ Ошибка загрузки ${label}: ${err.message}`, 'error');
-    return null;
+    return false;
   }
 }
 
+// ── Галерея медиафайлов ───────────────────────────────────────────────────────
+let _galleryEntityId  = null;
+let _galleryTitle     = '';
+let _galleryMediaList = [];
+
+async function showMediaGallery(entityId, title) {
+  _galleryEntityId  = String(entityId);
+  _galleryTitle     = title || entityId;
+
+  const modal = document.querySelector('#mediaGalleryModal');
+  if (!modal) return;
+
+  modal.querySelector('#galleryTitle').textContent = `Медиафайлы: ${_galleryTitle}`;
+  modal.querySelector('#galleryContent').innerHTML =
+    '<div style="text-align:center;padding:20px;color:#666;">⏳ Загружаем список...</div>';
+  modal.style.display = 'flex';
+
+  const response = await new Promise(resolve => {
+    chrome.runtime.sendMessage({ type: 'GET_MEDIA_LIST', entityId: _galleryEntityId }, resolve);
+  });
+
+  if (!response?.ok) {
+    modal.querySelector('#galleryContent').innerHTML =
+      `<div style="color:#dc3545;padding:12px;">Ошибка: ${response?.error || 'неизвестно'}</div>`;
+    return;
+  }
+
+  _galleryMediaList = response.media || [];
+  await renderGallery();
+}
+
+async function renderGallery() {
+  const modal   = document.querySelector('#mediaGalleryModal');
+  if (!modal) return;
+  const content = modal.querySelector('#galleryContent');
+
+  const photos = _galleryMediaList.filter(m => m.media_type === 'photo');
+  const videos = _galleryMediaList.filter(m => m.media_type === 'video');
+
+  content.innerHTML = `
+    <!-- Фото -->
+    <div style="margin-bottom:16px;">
+      <div style="font-size:13px;font-weight:600;color:#1e3a5f;margin-bottom:8px;">
+        📷 Фото (${photos.length})
+      </div>
+      <div id="galleryPhotos" style="display:flex;flex-wrap:wrap;gap:8px;min-height:40px;">
+        ${photos.length === 0
+          ? '<span style="color:#aaa;font-size:12px;">нет фото</span>'
+          : photos.map(m => `
+            <div data-media-id="${m.id}" style="position:relative;width:100px;height:100px;
+              border:1px solid #ddd;border-radius:6px;overflow:hidden;background:#f5f5f5;
+              display:flex;align-items:center;justify-content:center;cursor:pointer;">
+              <img data-filename="${m.file_name}" data-mime="${m.file_size ? 'image/jpeg' : 'image/jpeg'}"
+                src="" style="max-width:100%;max-height:100%;object-fit:cover;"
+                title="${m.file_name}" />
+              <span style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.5);
+                color:white;font-size:9px;padding:2px 4px;overflow:hidden;text-overflow:ellipsis;
+                white-space:nowrap;">${m.file_name}</span>
+              <button class="gallery-del-btn" data-id="${m.id}"
+                style="position:absolute;top:2px;right:2px;background:rgba(220,53,69,0.85);
+                color:white;border:none;border-radius:3px;cursor:pointer;font-size:10px;
+                padding:1px 5px;line-height:1.4;">✕</button>
+            </div>`).join('')}
+      </div>
+    </div>
+    <!-- Видео -->
+    <div>
+      <div style="font-size:13px;font-weight:600;color:#1e3a5f;margin-bottom:8px;">
+        🎥 Видео (${videos.length})
+      </div>
+      <div id="galleryVideos" style="display:flex;flex-direction:column;gap:4px;min-height:20px;">
+        ${videos.length === 0
+          ? '<span style="color:#aaa;font-size:12px;">нет видео</span>'
+          : videos.map(m => {
+              const kb = m.file_size ? ' (' + (m.file_size / 1024).toFixed(0) + ' КБ)' : '';
+              return `<div style="display:flex;align-items:center;gap:8px;padding:5px 8px;
+                background:#f8f9fa;border:1px solid #dee2e6;border-radius:4px;">
+                <span>🎥</span>
+                <span style="flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;
+                  white-space:nowrap;" title="${m.file_name}">${m.file_name}${kb}</span>
+                <button class="gallery-del-btn" data-id="${m.id}"
+                  style="background:#dc3545;color:white;border:none;border-radius:3px;
+                  cursor:pointer;font-size:10px;padding:2px 7px;">✕</button>
+              </div>`;
+            }).join('')}
+      </div>
+    </div>`;
+
+  // Загружаем превью фото через background.js (HTTP→base64)
+  content.querySelectorAll('img[data-filename]').forEach(async (img) => {
+    const fileName = img.getAttribute('data-filename');
+    const ext      = fileName.split('.').pop().toLowerCase();
+    const mimeMap  = { jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png',
+                       webp:'image/webp', gif:'image/gif', bmp:'image/bmp' };
+    const mimeType = mimeMap[ext] || 'image/jpeg';
+    const res = await new Promise(resolve =>
+      chrome.runtime.sendMessage({ type: 'GET_MEDIA_FILE', fileName, mimeType }, resolve)
+    );
+    if (res?.ok) img.src = `data:${mimeType};base64,${res.base64}`;
+    else img.style.cssText += ';opacity:0.4;';
+  });
+
+  // Удаление
+  content.querySelectorAll('.gallery-del-btn').forEach(btn => {
+    btn.addEventListener('click', withLock(btn, async () => {
+      const id = parseInt(btn.getAttribute('data-id'));
+      if (!confirm('Удалить файл?')) return;
+      const res = await new Promise(resolve =>
+        chrome.runtime.sendMessage({ type: 'DELETE_MEDIA', id }, resolve)
+      );
+      if (res?.ok) {
+        _galleryMediaList = _galleryMediaList.filter(m => m.id !== id);
+        await renderGallery();
+        _syncMediaFlags(_galleryEntityId, _galleryMediaList);
+        showToast('Файл удалён', 'success');
+      } else {
+        showToast('Ошибка удаления: ' + (res?.error || ''), 'error');
+      }
+    }, { label: '...' }));
+  });
+}
+
+// Синхронизировать _mediaFlags + SQLite + кнопки в строке таблицы
+function _syncMediaFlags(entityId, mediaList) {
+  const hasPhoto = mediaList.some(m => m.media_type === 'photo');
+  const hasVideo = mediaList.some(m => m.media_type === 'video');
+  _mediaFlags[entityId + '_photo'] = hasPhoto;
+  _mediaFlags[entityId + '_video'] = hasVideo;
+  const row = document.querySelector(`#statusTable tr[data-target-id="${entityId}"]`);
+  if (row) _applyMediaFlags(row, entityId);
+  wsSend({
+    type:      'UPDATE_TARGET_LOCAL',
+    entity_id: String(entityId),
+    has_photo: hasPhoto ? 1 : 0,
+    has_video: hasVideo ? 1 : 0,
+  });
+}
+
+// ── Загрузка нескольких файлов из галереи ─────────────────────────────────────
+async function _galleryUploadFiles(files, mediaType) {
+  let uploaded = 0;
+  for (const file of Array.from(files)) {
+    showToast(`⏳ Загружаем ${file.name}...`, 'info');
+    const ok = await uploadMediaFile(_galleryEntityId, file, mediaType);
+    if (ok) uploaded++;
+  }
+  if (uploaded > 0) {
+    // Обновляем список
+    const res = await new Promise(resolve =>
+      chrome.runtime.sendMessage({ type: 'GET_MEDIA_LIST', entityId: _galleryEntityId }, resolve)
+    );
+    if (res?.ok) {
+      _galleryMediaList = res.media || [];
+      await renderGallery();
+      _syncMediaFlags(_galleryEntityId, _galleryMediaList);
+    }
+  }
+}
 
 function createPopup() {
   if (popupElement) return popupElement;
@@ -82,20 +205,11 @@ function createPopup() {
   popupElement.id = 'extension-popup';
   popupElement.innerHTML = `
   <div style="
-    position: fixed;
-    top: 25px;
-    right: 20px;
-    width: 70%;
-    max-height: calc(100vh - 40px);
-    background: white;
-    border-radius: 12px;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.25);
-    z-index: 10;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    font-family: system-ui, sans-serif;
-  ">
+    position: fixed; top: 25px; right: 20px; width: 70%;
+    max-height: calc(100vh - 40px); background: white; border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.25); z-index: 10;
+    display: flex; flex-direction: column; overflow: hidden;
+    font-family: system-ui, sans-serif;">
     <style>
       #statusTable { width: 100%; min-width:1000px; border-collapse: collapse; font-size: 12px; }
       #statusTable th, #statusTable td { padding: 10px 8px; border: 1px solid #d0d7de; text-align: center; vertical-align: middle; }
@@ -103,80 +217,54 @@ function createPopup() {
       .editable { background: #fff9e6; min-height: 44px; }
       select, button { font-size: 12px; min-height: 44px; padding: 8px 12px; touch-action: manipulation; border-radius: 8px; }
       .table-wrapper { overflow-y: auto; -webkit-overflow-scrolling: touch; }
-      .table-wrapper::-webkit-scrollbar,
-      #tasksPanel::-webkit-scrollbar,
-      #planningPanel::-webkit-scrollbar { width: 8px; height: 8px; }
-      .table-wrapper::-webkit-scrollbar-track,
-      #tasksPanel::-webkit-scrollbar-track,
-      #planningPanel::-webkit-scrollbar-track { background: #e9ecef; border-radius: 4px; }
-      .table-wrapper::-webkit-scrollbar-thumb,
-      #tasksPanel::-webkit-scrollbar-thumb,
-      #planningPanel::-webkit-scrollbar-thumb { background: #2c7da0; border-radius: 4px; }
-      .table-wrapper::-webkit-scrollbar-thumb:hover,
-      #tasksPanel::-webkit-scrollbar-thumb:hover,
-      #planningPanel::-webkit-scrollbar-thumb:hover { background: #1e3a5f; }
+      .table-wrapper::-webkit-scrollbar, #tasksPanel::-webkit-scrollbar, #planningPanel::-webkit-scrollbar { width: 8px; height: 8px; }
+      .table-wrapper::-webkit-scrollbar-track, #tasksPanel::-webkit-scrollbar-track, #planningPanel::-webkit-scrollbar-track { background: #e9ecef; border-radius: 4px; }
+      .table-wrapper::-webkit-scrollbar-thumb, #tasksPanel::-webkit-scrollbar-thumb, #planningPanel::-webkit-scrollbar-thumb { background: #2c7da0; border-radius: 4px; }
       #statusTable thead th { background: #fff; }
-      .eye-icon { font-size: 15px; padding: 5px 10px; background: #2c7da0; color: white; border: none; border-radius: 4px; cursor: pointer; }
-      @media (max-width: 800px) { #statusTable { font-size: 12px; } #statusTable th, #statusTable td { padding: 8px 6px; } button { padding: 10px 14px; } }
-      @media (max-width: 600px) { #statusTable { min-width: 600px; font-size: 12px; } }
       .button-panel { display: flex; justify-content: flex-end; gap: 12px; flex-wrap: wrap; padding: 12px 16px; background: #e9ecef; border-top: 1px solid #ced4da; flex-shrink: 0; }
-      #addTargetModal input[type="text"],
-      #addTargetModal input[type="number"],
-      #addTargetModal input[type="time"],
-      #addTargetModal input[type="date"],
-      #addTargetModal select {
-        width: 100%; padding: 8px 10px; border: 1px solid #ccc;
-        border-radius: 6px; font-size: 13px; box-sizing: border-box; min-height: unset;
-      }
-      #addTargetModal label { font-size: 12px; color: #555; display: block; margin-bottom: 4px; }
-      .file-input-wrap {
-        border: 1px dashed #ccc; border-radius: 6px; padding: 8px 10px;
-        background: #fafafa; cursor: pointer;
-      }
-      .file-input-wrap input[type="file"] { width: 100%; font-size: 12px; cursor: pointer; }
-      .file-preview { margin-top: 6px; font-size: 11px; color: #28a745; display: none; }
+      #addTargetModal input[type="text"], #addTargetModal input[type="number"],
+      #addTargetModal input[type="time"], #addTargetModal input[type="date"],
+      #addTargetModal select { width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:6px;font-size:13px;box-sizing:border-box;min-height:unset; }
+      #addTargetModal label { font-size:12px;color:#555;display:block;margin-bottom:4px; }
+      .file-input-wrap { border:1px dashed #ccc;border-radius:6px;padding:8px 10px;background:#fafafa; }
+      .file-input-wrap input[type="file"] { width:100%;font-size:12px;cursor:pointer; }
+      .file-preview { margin-top:6px;font-size:11px;color:#28a745;display:none; }
     </style>
 
-    <div style="padding: 5px 14px; background: #1e3a5f; color: white; display: flex; flex-direction: column; flex-shrink: 0;">
-      <div style="display: flex; justify-content: space-between; align-items: center;">
-        <div style="display: flex; align-items: center; gap: 8px;">
-          <h3 style="margin: 0; font-size: 16px;">📋 Таблица учёта целей</h3>
-          <button id="addTargetBtn" style="background:#28a745; color:white; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; font-size:14px;">+ Добавить цель</button>
-          <div style="position:relative; display:inline-block;">
-            <button id="showTasksBtn" style="background:#fd7e14; color:white; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; font-size:14px;">📋 Задачи</button>
-            <span id="task-badge" style="display:none; position:absolute; top:-6px; right:-6px; background:#dc3545; color:white; border-radius:50%; width:18px; height:18px; font-size:11px; align-items:center; justify-content:center; font-weight:600;"></span>
+    <!-- Шапка -->
+    <div style="padding:5px 14px;background:#1e3a5f;color:white;display:flex;flex-direction:column;flex-shrink:0;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <h3 style="margin:0;font-size:16px;">📋 Таблица учёта целей</h3>
+          <button id="addTargetBtn" style="background:#28a745;color:white;border:none;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:14px;">+ Добавить цель</button>
+          <div style="position:relative;display:inline-block;">
+            <button id="showTasksBtn" style="background:#fd7e14;color:white;border:none;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:14px;">📋 Задачи</button>
+            <span id="task-badge" style="display:none;position:absolute;top:-6px;right:-6px;background:#dc3545;color:white;border-radius:50%;width:18px;height:18px;font-size:11px;align-items:center;justify-content:center;font-weight:600;"></span>
           </div>
-          <button id="showPlanningBtn" style="background:#6f42c1; color:white; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; font-size:14px;">📅 Спланировано</button>
+          <button id="showPlanningBtn" style="background:#6f42c1;color:white;border:none;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:14px;">📅 Спланировано</button>
         </div>
-        <div style="display:flex; align-items:center; gap:8px;">
-          <span id="myRoleTag" style="font-size:12px;background:#2c5282;padding:4px 10px;border-radius:6px;white-space:nowrap;">
-            🔄 Определяю расчёт...
-          </span>
-          <button id="closePopupBtn" style="background: none; border: none; color: white; font-size: 28px; padding: 2px 12px; cursor: pointer;">&times;</button>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span id="myRoleTag" style="font-size:12px;background:#2c5282;padding:4px 10px;border-radius:6px;white-space:nowrap;">🔄 Определяю расчёт...</span>
+          <button id="closePopupBtn" style="background:none;border:none;color:white;font-size:28px;padding:2px 12px;cursor:pointer;">&times;</button>
         </div>
       </div>
-      <div id="online-indicator" style="padding: 4px 6px; font-size: 11px; opacity: 0.9; min-height: 18px; display:flex; flex-wrap:wrap; align-items:center; gap:4px;"></div>
+      <div id="online-indicator" style="padding:4px 6px;font-size:11px;opacity:0.9;min-height:18px;display:flex;flex-wrap:wrap;align-items:center;gap:4px;"></div>
     </div>
 
-    <div id="dates-panel" style="
-      background: #162d4a; padding: 6px 14px; display: flex; align-items: center;
-      gap: 6px; flex-wrap: wrap; flex-shrink: 0; border-bottom: 1px solid #0d1f33; min-height: 36px;
-    ">
+    <!-- Панель дат -->
+    <div id="dates-panel" style="background:#162d4a;padding:6px 14px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;flex-shrink:0;border-bottom:1px solid #0d1f33;min-height:36px;">
       <span style="font-size:11px;color:#7aa3c8;margin-right:4px;">📅 Даты:</span>
       <div id="dates-list" style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">
         <span style="font-size:11px;color:#5a7fa0;">загрузка...</span>
       </div>
       <div style="margin-left:auto;display:flex;gap:6px;align-items:center;">
-        <button id="publishPlanBtn" title="Опубликовать план в AstraMap" style="
-          display:none; background:#28a745; border:none; color:white;
-          border-radius:4px; padding:3px 10px; cursor:pointer; font-size:11px;">📤 Опубликовать план</button>
-        <button id="refreshDatesBtn" title="Обновить список дат" style="
-          background:none; border:1px solid #4a7a9b; color:#7aa3c8;
-          border-radius:4px; padding:2px 8px; cursor:pointer; font-size:11px;">🔄</button>
+        <button id="publishPlanBtn" title="Опубликовать план" style="display:none;background:#28a745;border:none;color:white;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px;">📤 Опубликовать план</button>
+        <button id="refreshDatesBtn" title="Обновить даты" style="background:none;border:1px solid #4a7a9b;color:#7aa3c8;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:11px;">🔄</button>
       </div>
     </div>
 
-    <div class="table-wrapper" style="flex: 1; overflow-y: auto; padding: 12px; background: #f5f7fa; color: black;">
+    <!-- Таблица целей -->
+    <div class="table-wrapper" style="flex:1;overflow-y:auto;padding:12px;background:#f5f7fa;color:black;">
       <table id="statusTable">
         <thead>
           <tr>
@@ -197,8 +285,9 @@ function createPopup() {
       </table>
     </div>
 
-    <div id="tasksPanel" style="display:none; flex:1; overflow-y:auto; padding:12px; background:#f5f7fa; color:black;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+    <!-- Панель задач -->
+    <div id="tasksPanel" style="display:none;flex:1;overflow-y:auto;padding:12px;background:#f5f7fa;color:black;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
         <strong style="font-size:14px;">Задачи между расчётами</strong>
         <button id="newTaskBtn" style="background:#fd7e14;color:white;border:none;padding:5px 10px;border-radius:5px;cursor:pointer;font-size:12px;">+ Новая задача</button>
       </div>
@@ -217,29 +306,21 @@ function createPopup() {
       </table>
     </div>
 
-    <div id="planningPanel" style="
-      display:none; flex-direction:column; flex:1;
-      overflow:hidden; background:#f5f7fa; color:black;
-    "></div>
+    <!-- Панель планирования -->
+    <div id="planningPanel" style="display:none;flex-direction:column;flex:1;overflow:hidden;background:#f5f7fa;color:black;"></div>
 
+    <!-- Модал новой задачи -->
     <div id="newTaskModal" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:none;justify-content:center;align-items:center;z-index:10001;">
       <div style="background:white;width:90%;max-width:420px;border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:10px;">
         <h3 style="margin:0;font-size:16px;">Новая задача</h3>
         <label style="font-size:12px;color:#555;">Подразделение получателя:</label>
-        <select id="taskOfficeSelect" style="padding:6px;border-radius:5px;border:1px solid #ccc;">
-          <option value="">— выберите подразделение —</option>
-        </select>
+        <select id="taskOfficeSelect" style="padding:6px;border-radius:5px;border:1px solid #ccc;"><option value="">— выберите —</option></select>
         <label style="font-size:12px;color:#555;">Кому:</label>
-        <select id="taskTo" style="padding:6px;border-radius:5px;border:1px solid #ccc;">
-          <option value="">— сначала выберите подразделение —</option>
-        </select>
+        <select id="taskTo" style="padding:6px;border-radius:5px;border:1px solid #ccc;"><option value="">— выберите —</option></select>
         <label style="font-size:12px;color:#555;">Объект (необязательно):</label>
-        <select id="taskTargetSelect" style="padding:6px;border-radius:5px;border:1px solid #ccc;">
-          <option value="">— без привязки к цели —</option>
-        </select>
+        <select id="taskTargetSelect" style="padding:6px;border-radius:5px;border:1px solid #ccc;"><option value="">— без привязки —</option></select>
         <label style="font-size:12px;color:#555;">Текст задачи:</label>
-        <textarea id="taskText" rows="3" placeholder="Например: Доразведать объект, уточнить координаты"
-          style="padding:6px;border-radius:5px;border:1px solid #ccc;resize:vertical;font-size:13px;"></textarea>
+        <textarea id="taskText" rows="3" placeholder="Текст задачи..." style="padding:6px;border-radius:5px;border:1px solid #ccc;resize:vertical;font-size:13px;"></textarea>
         <div style="display:flex;gap:10px;justify-content:flex-end;">
           <button id="cancelNewTask" style="padding:6px 14px;border-radius:5px;border:1px solid #ccc;cursor:pointer;">Отмена</button>
           <button id="submitNewTask" style="padding:6px 14px;background:#fd7e14;color:white;border:none;border-radius:5px;cursor:pointer;font-weight:600;">Поставить задачу</button>
@@ -247,78 +328,43 @@ function createPopup() {
       </div>
     </div>
 
+    <!-- Кнопки внизу -->
     <div class="button-panel">
       <button id="exportTableData" style="background:#007bff;color:white;">📎 Экспорт Excel</button>
       <button id="loadTodayMap" style="background:#17a2b8;color:white;">📥 Сегодня</button>
     </div>
 
-    <!-- ════════════════════════════════════════════════════════════════
-         Модал добавления цели — с адресом, фото, видео
-         ════════════════════════════════════════════════════════════════ -->
+    <!-- ═══ Модал добавления цели ═══ -->
     <div id="addTargetModal" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:none;justify-content:center;align-items:center;z-index:10000;">
-      <div style="background:white;width:90%;max-width:520px;border-radius:10px;padding:20px;
-                  display:flex;flex-direction:column;gap:10px;max-height:90vh;overflow-y:auto;">
+      <div style="background:white;width:90%;max-width:520px;border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:10px;max-height:90vh;overflow-y:auto;">
         <h3 style="margin:0;font-size:16px;">Добавление цели</h3>
-
         <label>Название цели (необязательно):</label>
         <input id="targetTitle" type="text" placeholder="Краткое название" />
-
         <label>Категория цели:</label>
         <select id="targetType">
-          <option value="" selected disabled>— Выберите категорию —</option>
-          <option value="ПУ">ПУ</option>
-          <option value="ПУ БПЛА">ПУ БПЛА</option>
-          <option value="Точка влета">Точка взлёта</option>
-          <option value="РЛС">РЛС</option>
-          <option value="РЭБ">РЭБ</option>
-          <option value="Связь">Связь</option>
-          <option value="ЗРК">ЗРК</option>
-          <option value="ПЗРК">ПЗРК</option>
-          <option value="Танк">Танк</option>
-          <option value="БМП">БМП</option>
-          <option value="ББМ">ББМ</option>
-          <option value="БТР">БТР</option>
-          <option value="Гаубица">Гаубица</option>
-          <option value="САУ">САУ</option>
-          <option value="РСЗО">РСЗО</option>
-          <option value="Миномёт">Миномёт</option>
-          <option value="Склад">Склад</option>
-          <option value="КНП">КНП</option>
-          <option value="Укрытие">Укрытие</option>
-          <option value="Блиндаж">Блиндаж</option>
+          <option value="" disabled selected>— Выберите категорию —</option>
+          <option value="ПУ">ПУ</option><option value="ПУ БПЛА">ПУ БПЛА</option>
+          <option value="Точка влета">Точка взлёта</option><option value="РЛС">РЛС</option>
+          <option value="РЭБ">РЭБ</option><option value="Связь">Связь</option>
+          <option value="ЗРК">ЗРК</option><option value="ПЗРК">ПЗРК</option>
+          <option value="Танк">Танк</option><option value="БМП">БМП</option>
+          <option value="ББМ">ББМ</option><option value="БТР">БТР</option>
+          <option value="Гаубица">Гаубица</option><option value="САУ">САУ</option>
+          <option value="РСЗО">РСЗО</option><option value="Миномёт">Миномёт</option>
+          <option value="Склад">Склад</option><option value="КНП">КНП</option>
+          <option value="Укрытие">Укрытие</option><option value="Блиндаж">Блиндаж</option>
           <option value="Личный состав">Личный состав</option>
         </select>
-
-        <!-- ── Адрес ────────────────────────────────────────────────── -->
         <label>Адрес / местность объекта:</label>
-        <input id="targetAddress" type="text"
-          placeholder="н-р: лесной массив, 500м с. н.п. Петровка" />
-
-        <!-- ── Координаты ───────────────────────────────────────────── -->
+        <input id="targetAddress" type="text" placeholder="н-р: лесной массив, 500м с. н.п. Петровка" />
         <div style="display:flex;gap:10px;">
-          <div style="flex:1;">
-            <label>Координата X (СК-42):</label>
-            <input id="coordX" type="number" placeholder="Координата X" />
-          </div>
-          <div style="flex:1;">
-            <label>Координата Y (СК-42):</label>
-            <input id="coordY" type="number" placeholder="Координата Y" />
-          </div>
+          <div style="flex:1;"><label>Координата X (СК-42):</label><input id="coordX" type="number" placeholder="X" /></div>
+          <div style="flex:1;"><label>Координата Y (СК-42):</label><input id="coordY" type="number" placeholder="Y" /></div>
         </div>
-
-        <!-- ── Дата / время ────────────────────────────────────────── -->
         <div style="display:flex;gap:10px;">
-          <div style="flex:1;">
-            <label>Дата обнаружения:</label>
-            <input id="impactDate" type="date" />
-          </div>
-          <div style="flex:1;">
-            <label>Время обнаружения:</label>
-            <input id="impactTime" type="time" />
-          </div>
+          <div style="flex:1;"><label>Дата обнаружения:</label><input id="impactDate" type="date" /></div>
+          <div style="flex:1;"><label>Время обнаружения:</label><input id="impactTime" type="time" /></div>
         </div>
-
-        <!-- ── Результат ───────────────────────────────────────────── -->
         <label>Результат:</label>
         <select id="impactResult">
           <option value="вскрыто" selected>Вскрыто</option>
@@ -328,36 +374,44 @@ function createPopup() {
           <option value="подтверждено">Подтверждено</option>
           <option value="подавлено">Подавлено</option>
         </select>
-
-        <!-- ── Фото ────────────────────────────────────────────────── -->
-        <label>📷 Фото объекта (необязательно):</label>
+        <label>📷 Фото (можно несколько):</label>
         <div class="file-input-wrap">
-          <input id="targetPhoto" type="file"
-            accept="image/jpeg,image/png,image/webp,image/*" />
-          <div id="targetPhotoPreview" class="file-preview">
-            ✅ Выбран: <span id="targetPhotoName"></span>
-          </div>
+          <input id="targetPhoto" type="file" accept="image/*" multiple />
+          <div id="targetPhotoPreview" class="file-preview">✅ Выбрано: <span id="targetPhotoName"></span></div>
         </div>
-
-        <!-- ── Видео ───────────────────────────────────────────────── -->
-        <label>🎥 Видео объекта (необязательно):</label>
+        <label>🎥 Видео (можно несколько):</label>
         <div class="file-input-wrap">
-          <input id="targetVideo" type="file"
-            accept="video/mp4,video/quicktime,video/x-msvideo,video/webm,video/*" />
-          <div id="targetVideoPreview" class="file-preview">
-            ✅ Выбран: <span id="targetVideoName"></span>
-          </div>
+          <input id="targetVideo" type="file" accept="video/*" multiple />
+          <div id="targetVideoPreview" class="file-preview">✅ Выбрано: <span id="targetVideoName"></span></div>
         </div>
-
         <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:4px;">
-          <button id="cancelAddTarget"
-            style="padding:7px 16px;border:1px solid #ccc;border-radius:6px;cursor:pointer;background:white;">
-            Отмена
-          </button>
-          <button id="submitAddTarget"
-            style="padding:7px 16px;background:#28a745;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600;">
-            💾 Добавить
-          </button>
+          <button id="cancelAddTarget" style="padding:7px 16px;border:1px solid #ccc;border-radius:6px;cursor:pointer;background:white;">Отмена</button>
+          <button id="submitAddTarget" style="padding:7px 16px;background:#28a745;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600;">💾 Добавить</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ Модал галереи медиафайлов ═══ -->
+    <div id="mediaGalleryModal" style="position:fixed;inset:0;background:rgba(0,0,0,0.65);display:none;justify-content:center;align-items:center;z-index:10003;">
+      <div style="background:white;width:90%;max-width:640px;border-radius:12px;padding:20px;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,0.3);">
+        <!-- Шапка галереи -->
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-shrink:0;">
+          <h3 id="galleryTitle" style="margin:0;font-size:15px;color:#1e3a5f;"></h3>
+          <button id="galleryCloseBtn" style="background:none;border:none;font-size:26px;cursor:pointer;color:#666;line-height:1;">&times;</button>
+        </div>
+        <!-- Контент галереи -->
+        <div id="galleryContent" style="flex:1;overflow-y:auto;min-height:80px;"></div>
+        <!-- Кнопки добавления -->
+        <div style="display:flex;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid #eee;flex-shrink:0;">
+          <label style="padding:7px 14px;background:#28a745;color:white;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">
+            + Фото
+            <input id="galleryPhotoInput" type="file" accept="image/*" multiple style="display:none;" />
+          </label>
+          <label style="padding:7px 14px;background:#17a2b8;color:white;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">
+            + Видео
+            <input id="galleryVideoInput" type="file" accept="video/*" multiple style="display:none;" />
+          </label>
+          <span style="font-size:11px;color:#888;align-self:center;">Можно выбрать несколько файлов</span>
         </div>
       </div>
     </div>
@@ -370,45 +424,38 @@ function createPopup() {
   if (typeof _renderOnlineIndicator === 'function') _renderOnlineIndicator();
   if (typeof updateRoleTag === 'function') updateRoleTag();
 
-  const modal = popupElement.querySelector('#addTargetModal');
-
-  // ── Превью выбранных файлов ──────────────────────────────────────────────
+  // ── Превью файлов в модале добавления ──────────────────────────────────────
   popupElement.querySelector('#targetPhoto').addEventListener('change', function() {
     const preview = popupElement.querySelector('#targetPhotoPreview');
     const nameEl  = popupElement.querySelector('#targetPhotoName');
-    if (this.files[0]) {
-      nameEl.textContent     = this.files[0].name;
-      preview.style.display  = 'block';
-    } else {
-      preview.style.display  = 'none';
-    }
+    if (this.files?.length) {
+      nameEl.textContent = Array.from(this.files).map(f => f.name).join(', ');
+      preview.style.display = 'block';
+    } else preview.style.display = 'none';
   });
 
   popupElement.querySelector('#targetVideo').addEventListener('change', function() {
     const preview = popupElement.querySelector('#targetVideoPreview');
     const nameEl  = popupElement.querySelector('#targetVideoName');
-    if (this.files[0]) {
-      nameEl.textContent     = this.files[0].name;
-      preview.style.display  = 'block';
-    } else {
-      preview.style.display  = 'none';
-    }
+    if (this.files?.length) {
+      nameEl.textContent = Array.from(this.files).map(f => f.name).join(', ');
+      preview.style.display = 'block';
+    } else preview.style.display = 'none';
   });
 
-  // ── Открыть модал ────────────────────────────────────────────────────────
-  popupElement.querySelector('#addTargetBtn').addEventListener('click', function () {
+  // ── Открыть модал добавления ────────────────────────────────────────────────
+  popupElement.querySelector('#addTargetBtn').addEventListener('click', () => {
     popupElement.querySelector('#impactDate').value = getMoscowDateStr();
     popupElement.querySelector('#impactTime').value = getMoscowTimeStr();
-    modal.style.display = 'flex';
+    document.querySelector('#addTargetModal').style.display = 'flex';
   });
 
-  // ── Отмена ───────────────────────────────────────────────────────────────
   popupElement.querySelector('#cancelAddTarget').onclick = () => {
     _resetAddTargetModal();
-    modal.style.display = 'none';
+    document.querySelector('#addTargetModal').style.display = 'none';
   };
 
-  // ── Отправка ─────────────────────────────────────────────────────────────
+  // ── Submit: добавление цели ─────────────────────────────────────────────────
   const submitBtn = popupElement.querySelector('#submitAddTarget');
   submitBtn.addEventListener('click', withLock(submitBtn, async () => {
     try {
@@ -416,101 +463,62 @@ function createPopup() {
       const coordX         = popupElement.querySelector('#coordX').value.trim();
       const coordY         = popupElement.querySelector('#coordY').value.trim();
       const address        = popupElement.querySelector('#targetAddress').value.trim();
-      const photoFile      = popupElement.querySelector('#targetPhoto').files[0] || null;
-      const videoFile      = popupElement.querySelector('#targetVideo').files[0] || null;
+      const photoFiles     = popupElement.querySelector('#targetPhoto').files;
+      const videoFiles     = popupElement.querySelector('#targetVideo').files;
       const impactTime     = popupElement.querySelector('#impactTime').value;
       const impactDate     = popupElement.querySelector('#impactDate').value;
       const result         = popupElement.querySelector('#impactResult').value;
 
-      // ── Валидация ─────────────────────────────────────────────────────
-      if (!characteristic) {
-        showToast('❌ Выберите категорию цели', 'error'); return;
-      }
-      if (!coordX || !coordY) {
-        showToast('❌ Введите координаты X и Y', 'error'); return;
-      }
+      if (!characteristic) { showToast('❌ Выберите категорию цели', 'error'); return; }
+      if (!coordX || !coordY) { showToast('❌ Введите координаты X и Y', 'error'); return; }
 
-      const rowData = {
-        targetNumber:   '0',
-        characteristic,
-        coordX,
-        coordY,
-        impactTime,
-        result,
-        defeatDate: impactDate,
-      };
+      const rowData = { targetNumber: '0', characteristic, coordX, coordY, impactTime, result, defeatDate: impactDate };
 
-      // ── Целевая папка ──────────────────────────────────────────────────
-      const _today         = getMoscowDateStr();
-      const _tree          = JSON.parse(localStorage.getItem(CACHE_KEY_DATES) || 'null');
-      const _dates         = _tree?.dates || [];
-      const _targetDate    = activeFolderDate || _today;
-      const _targetEntry   = _dates.find(d => d.date === _targetDate);
-      const _targetFolderId = _targetEntry?.folderId || latestFolderId;
+      const _today      = getMoscowDateStr();
+      const _tree       = JSON.parse(localStorage.getItem(CACHE_KEY_DATES) || 'null');
+      const _targetDate = activeFolderDate || _today;
+      const _entry      = (_tree?.dates || []).find(d => d.date === _targetDate);
+      const _folderId   = _entry?.folderId || latestFolderId;
 
-      // ── Шаг 1: загрузить медиа в AstraMap ПЕРЕД созданием объекта ─────
-      // Медиа должны быть в parameters["8"] уже при создании
-      const mediaItems = [];
-
-      if (photoFile) {
-        showToast('⏳ Загружаем фото...', 'info');
-        const photoItem = await uploadMediaFile(photoFile, 'photo');
-        if (photoItem) mediaItems.push(photoItem);
-      }
-
-      if (videoFile) {
-        showToast('⏳ Загружаем видео...', 'info');
-        const videoItem = await uploadMediaFile(videoFile, 'video');
-        if (videoItem) mediaItems.push(videoItem);
-      }
-
-      // ── Шаг 2: создать объект в AstraMap (с медиа в param "8") ────────
+      // Шаг 1: создать объект в AstraMap (без медиа)
       let astraResult = null;
       try {
-        astraResult = await apiSendTarget(rowData, _targetFolderId, mediaItems);
+        astraResult = await apiSendTarget(rowData, _folderId, []);
       } catch (err) {
         showToast('❌ Ошибка создания в AstraMap: ' + err.message, 'error');
         return;
       }
 
-      const newEntityId = astraResult?.id
-                       || astraResult?.entity?.id
-                       || astraResult?.entityID
-                       || null;
+      const newEntityId = astraResult?.id || astraResult?.entity?.id || astraResult?.entityID || null;
+      if (!newEntityId) console.warn('[addTarget] entity_id не найден:', astraResult);
 
-      if (!newEntityId) {
-        console.warn('[addTarget] entity_id не определён из ответа:', astraResult);
-      }
-
-      // ── Шаг 3: перезагрузить таблицу ──────────────────────────────────
+      // Шаг 2: перезагрузить таблицу
       await loadByDateFromPanel(_targetDate);
 
-      // ── Шаг 4: сохранить локальные поля (адрес, медиа-флаги) в SQLite ─
-      if (newEntityId && (address || mediaItems.length > 0)) {
+      // Шаг 3: локальные поля (после SYNC_TARGETS)
+      if (newEntityId) {
         await new Promise(r => setTimeout(r, 700));
 
-        // Адрес
-        if (address) {
-          wsSend({
-            type:      'UPDATE_TARGET_LOCAL',
-            entity_id: String(newEntityId),
-            address,
-          });
-        }
+        if (address) wsSend({ type: 'UPDATE_TARGET_LOCAL', entity_id: String(newEntityId), address });
 
-        // Медиа-флаги (для индикаторов 📷/🎥 в таблице)
-        if (mediaItems.length > 0) {
-          wsSend({
-            type:      'UPDATE_TARGET_LOCAL',
-            entity_id: String(newEntityId),
-            has_photo: mediaItems.some(m => m.type === 'image') ? 1 : 0,
-            has_video: mediaItems.some(m => m.type === 'video') ? 1 : 0,
-          });
+        // Загружаем фото (несколько)
+        let hasPhoto = 0, hasVideo = 0;
+        for (const file of Array.from(photoFiles)) {
+          const ok = await uploadMediaFile(newEntityId, file, 'photo');
+          if (ok) hasPhoto = 1;
+        }
+        // Загружаем видео (несколько)
+        for (const file of Array.from(videoFiles)) {
+          const ok = await uploadMediaFile(newEntityId, file, 'video');
+          if (ok) hasVideo = 1;
+        }
+        if (hasPhoto || hasVideo) {
+          wsSend({ type: 'UPDATE_TARGET_LOCAL', entity_id: String(newEntityId), has_photo: hasPhoto, has_video: hasVideo });
         }
       }
 
       _resetAddTargetModal();
-      modal.style.display = 'none';
+      document.querySelector('#addTargetModal').style.display = 'none';
       showToast('✅ Цель добавлена', 'success');
 
     } catch (e) {
@@ -518,6 +526,23 @@ function createPopup() {
       showToast('❌ Ошибка: ' + e.message, 'error');
     }
   }, { label: '⏳ Добавляем...' }));
+
+  // ── Галерея: закрыть ────────────────────────────────────────────────────────
+  popupElement.querySelector('#galleryCloseBtn').addEventListener('click', () => {
+    document.querySelector('#mediaGalleryModal').style.display = 'none';
+  });
+
+  // ── Галерея: загрузка фото ──────────────────────────────────────────────────
+  popupElement.querySelector('#galleryPhotoInput').addEventListener('change', async function() {
+    if (this.files?.length) await _galleryUploadFiles(this.files, 'photo');
+    this.value = '';
+  });
+
+  // ── Галерея: загрузка видео ─────────────────────────────────────────────────
+  popupElement.querySelector('#galleryVideoInput').addEventListener('change', async function() {
+    if (this.files?.length) await _galleryUploadFiles(this.files, 'video');
+    this.value = '';
+  });
 
   popupElement.querySelector('#closePopupBtn').addEventListener('click', () => {
     popupElement.style.display = 'none';
@@ -527,7 +552,7 @@ function createPopup() {
   pubBtn.addEventListener('click', withLock(pubBtn, async () => {
     const planDate = pubBtn.getAttribute('data-plan-date');
     if (!planDate) { showToast('Дата плана не определена', 'error'); return; }
-    if (!confirm(`Опубликовать план на ${planDate.slice(8)}.${planDate.slice(5,7)} в AstraMap?`)) return;
+    if (!confirm(`Опубликовать план на ${planDate.slice(8)}.${planDate.slice(5,7)}?`)) return;
     await publishPlan(planDate);
   }, { label: '⏳ Публикуем...' }));
 
@@ -536,17 +561,14 @@ function createPopup() {
   const planningPanel = popupElement.querySelector('#planningPanel');
 
   popupElement.querySelector('#showPlanningBtn').addEventListener('click', () => {
-    const isOpen = planningPanel && planningPanel.style.display !== 'none';
+    const isOpen = planningPanel?.style.display !== 'none';
     if (tableWrapper)  tableWrapper.style.display  = 'none';
     if (tasksPanel)    tasksPanel.style.display     = 'none';
     if (planningPanel) planningPanel.style.display  = 'none';
     popupElement.querySelector('#showTasksBtn').textContent    = '📋 Задачи';
     popupElement.querySelector('#showPlanningBtn').textContent = '📅 Спланировано';
     if (!isOpen) {
-      if (planningPanel) {
-        planningPanel.style.display       = 'flex';
-        planningPanel.style.flexDirection = 'column';
-      }
+      if (planningPanel) { planningPanel.style.display = 'flex'; planningPanel.style.flexDirection = 'column'; }
       popupElement.querySelector('#showPlanningBtn').textContent = '🗺️ Цели';
       loadPlanningTargets();
     } else {
@@ -570,20 +592,18 @@ function createPopup() {
     }
   });
 
-  // ── Модал новой задачи ───────────────────────────────────────────────────
+  // ── Модал новой задачи ───────────────────────────────────────────────────────
   const newTaskModal = popupElement.querySelector('#newTaskModal');
 
   popupElement.querySelector('#newTaskBtn').addEventListener('click', () => {
-    if (!myRole) { showToast('Сначала выберите свой расчёт', 'error'); return; }
+    if (!myRole) { showToast('Сначала выберите расчёт', 'error'); return; }
     const targetSelect = newTaskModal.querySelector('#taskTargetSelect');
     targetSelect.innerHTML = '<option value="">— без привязки к цели —</option>';
-    const rows = document.querySelectorAll('#statusTable tbody tr');
-    rows.forEach(row => {
-      const id    = row.cells[0]?.innerText.trim();
-      const title = row.cells[1]?.querySelector('select')?.value || '';
-      const opt   = document.createElement('option');
-      opt.value   = id;
-      opt.textContent = `#${id} ${title}`;
+    document.querySelectorAll('#statusTable tbody tr').forEach(row => {
+      const id = row.cells[1]?.innerText.trim();
+      const title = row.querySelector('.char-cell select')?.value || '';
+      const opt = document.createElement('option');
+      opt.value = id; opt.textContent = `#${id} ${title}`;
       targetSelect.appendChild(opt);
     });
     const officeSelect = newTaskModal.querySelector('#taskOfficeSelect');
@@ -593,8 +613,7 @@ function createPopup() {
       Object.entries(OFFICES).forEach(([id, office]) => {
         if (!canAssignTask(myOfficeId, id)) return;
         const opt = document.createElement('option');
-        opt.value = id;
-        opt.textContent = office.name + (id === myOfficeId ? ' (своё)' : '');
+        opt.value = id; opt.textContent = office.name + (id === myOfficeId ? ' (своё)' : '');
         officeSelect.appendChild(opt);
       });
       officeSelect.onchange = () => _fillRolesForOffice(officeSelect.value);
@@ -608,30 +627,26 @@ function createPopup() {
   });
 
   popupElement.querySelector('#submitNewTask').addEventListener('click', () => {
-    const to          = newTaskModal.querySelector('#taskTo').value;
-    const text        = newTaskModal.querySelector('#taskText').value.trim();
-    const targetSel   = newTaskModal.querySelector('#taskTargetSelect');
-    const targetId    = targetSel.value;
-    const targetTitle = targetId ? targetSel.options[targetSel.selectedIndex].text : '';
-    const toOfficeId  = newTaskModal.querySelector('#taskOfficeSelect')?.value || store.get('myOfficeId') || 'HQ';
-    const myOfficeId  = store.get('myOfficeId') || 'HQ';
-    if (!to)     { showToast('Укажите адресата', 'error'); return; }
-    if (!text)   { showToast('Введите текст задачи', 'error'); return; }
-    if (!myRole) { showToast('Сначала выберите свой расчёт', 'error'); return; }
-    if (!canAssignTask(myOfficeId, toOfficeId)) {
-      showToast('Нет прав назначать задачи этому подразделению', 'error'); return;
-    }
+    const to        = newTaskModal.querySelector('#taskTo').value;
+    const text      = newTaskModal.querySelector('#taskText').value.trim();
+    const targetSel = newTaskModal.querySelector('#taskTargetSelect');
+    const targetId  = targetSel.value;
+    const targetTitle  = targetId ? targetSel.options[targetSel.selectedIndex].text : '';
+    const toOfficeId   = newTaskModal.querySelector('#taskOfficeSelect')?.value || store.get('myOfficeId') || 'HQ';
+    const myOfficeId   = store.get('myOfficeId') || 'HQ';
+    if (!to)   { showToast('Укажите адресата', 'error'); return; }
+    if (!text) { showToast('Введите текст задачи', 'error'); return; }
+    if (!myRole) { showToast('Сначала выберите расчёт', 'error'); return; }
+    if (!canAssignTask(myOfficeId, toOfficeId)) { showToast('Нет прав', 'error'); return; }
     wsSend({ type: 'NEW_TASK', to, text, targetId, targetTitle, toOfficeId, fromOfficeId: myOfficeId });
     newTaskModal.style.display = 'none';
-    newTaskModal.querySelector('#taskTo').value            = '';
-    newTaskModal.querySelector('#taskText').value          = '';
-    newTaskModal.querySelector('#taskTargetSelect').value  = '';
-    const offSel = newTaskModal.querySelector('#taskOfficeSelect');
-    if (offSel) offSel.value = '';
+    newTaskModal.querySelector('#taskTo').value = '';
+    newTaskModal.querySelector('#taskText').value = '';
+    newTaskModal.querySelector('#taskTargetSelect').value = '';
   });
 
   popupElement.querySelector('#exportTableData').addEventListener('click', () => {
-    showToast('Экспорт в Excel – функция в разработке', 'info');
+    showToast('Экспорт в Excel – в разработке', 'info');
   });
 
   const refreshBtn = popupElement.querySelector('#refreshDatesBtn');
@@ -648,32 +663,31 @@ function createPopup() {
   return popupElement;
 }
 
-// ── Сброс всех полей модала добавления цели ──────────────────────────────────
 function _resetAddTargetModal() {
   const p = popupElement;
   if (!p) return;
-  p.querySelector('#targetTitle').value           = '';
-  p.querySelector('#targetType').value            = '';
-  p.querySelector('#targetAddress').value         = '';
-  p.querySelector('#coordX').value                = '';
-  p.querySelector('#coordY').value                = '';
-  p.querySelector('#impactTime').value            = '';
-  p.querySelector('#impactDate').value            = '';
-  p.querySelector('#impactResult').selectedIndex  = 0;
-  p.querySelector('#targetPhoto').value           = '';
-  p.querySelector('#targetVideo').value           = '';
+  p.querySelector('#targetTitle').value = '';
+  p.querySelector('#targetType').value = '';
+  p.querySelector('#targetAddress').value = '';
+  p.querySelector('#coordX').value = '';
+  p.querySelector('#coordY').value = '';
+  p.querySelector('#impactTime').value = '';
+  p.querySelector('#impactDate').value = '';
+  p.querySelector('#impactResult').selectedIndex = 0;
+  p.querySelector('#targetPhoto').value = '';
+  p.querySelector('#targetVideo').value = '';
   p.querySelector('#targetPhotoPreview').style.display = 'none';
   p.querySelector('#targetVideoPreview').style.display = 'none';
 }
 
 function closeBtn() {
-  const closeBtnElem = document.querySelector('#closePopupBtn');
-  if (closeBtnElem && !closeBtnElem.hasListener) {
-    closeBtnElem.addEventListener('click', function () {
+  const btn = document.querySelector('#closePopupBtn');
+  if (btn && !btn.hasListener) {
+    btn.addEventListener('click', () => {
       const popup = document.querySelector('#extension-popup');
       if (popup) popup.style.display = 'none';
     });
-    closeBtnElem.hasListener = true;
+    btn.hasListener = true;
     return true;
   }
   return false;
@@ -687,7 +701,7 @@ function findAndAddButton() {
   const btn = document.createElement('button');
   btn.id = 'extension-trigger-btn';
   btn.textContent = '📋 Формуляр цели';
-  btn.style.cssText = 'padding: 6px 12px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; margin: 4px;';
+  btn.style.cssText = 'padding:6px 12px;background:#28a745;color:white;border:none;border-radius:4px;cursor:pointer;margin:4px;';
 
   const popup = createPopup();
   btn.onclick = (e) => {
@@ -711,20 +725,16 @@ function findAndAddButton() {
 function updateAddTargetBtn() {
   const btn = document.querySelector('#addTargetBtn');
   if (!btn) return;
-  const today      = getMoscowDateStr();
-  const tomorrow   = new Date(Date.now() + 3*3600000 + 86400000).toISOString().slice(0,10);
-  const noDate     = !activeFolderDate;
-  const isToday    = activeFolderDate === today;
+  const today    = getMoscowDateStr();
+  const tomorrow = new Date(Date.now() + 3*3600000 + 86400000).toISOString().slice(0,10);
+  const noDate   = !activeFolderDate;
+  const isToday  = activeFolderDate === today;
   const isTomorrow = activeFolderDate === tomorrow;
   if (noDate || isToday || isTomorrow) {
-    btn.disabled = false;
-    btn.style.opacity = '1';
-    btn.style.cursor  = 'pointer';
-    btn.title = isTomorrow ? '📅 Добавление в папку завтрашнего дня' : '';
+    btn.disabled = false; btn.style.opacity = '1'; btn.style.cursor = 'pointer';
+    btn.title = isTomorrow ? '📅 Добавление в папку завтра' : '';
   } else {
-    btn.disabled = true;
-    btn.style.opacity = '0.4';
-    btn.style.cursor  = 'not-allowed';
-    btn.title = `Только просмотр. Добавление доступно для сегодня (${today}) и завтра (${tomorrow})`;
+    btn.disabled = true; btn.style.opacity = '0.4'; btn.style.cursor = 'not-allowed';
+    btn.title = `Только просмотр (доступно: сегодня ${today}, завтра ${tomorrow})`;
   }
 }

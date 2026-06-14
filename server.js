@@ -83,63 +83,91 @@ const httpServer = http.createServer((req, res) => {
   const urlPath = req.url.split('?')[0];
 
   // ── Загрузка медиафайла ────────────────────────────────────────────────
-if (req.method === 'POST' && urlPath === '/media/upload-to-astra') {
+if (req.method === 'POST' && urlPath === '/media/upload') {
+    const MAX_SIZE = 100 * 1024 * 1024;
     let body = '';
-    req.on('data', chunk => { body += chunk.toString(); });
-    req.on('end', async () => {
-  try {
-    const { token, fileName, mimeType, mediaType, base64Data, cookieStr } = JSON.parse(body);  // ← вот эта строка
-    if (!token || !fileName || !base64Data || !mediaType) {
+    let totalSize = 0;
+    let tooLarge = false;
+
+    req.on('data', chunk => {
+      totalSize += chunk.length;
+      if (totalSize > MAX_SIZE) { tooLarge = true; req.destroy(); return; }
+      body += chunk.toString();
+    });
+
+    req.on('end', () => {
+      if (tooLarge) {
+        res.writeHead(413); res.end(JSON.stringify({ error: 'Файл превышает 100 МБ' })); return;
+      }
+      try {
+        const { entityId, mediaType, fileName, mimeType, base64Data } = JSON.parse(body);
+        if (!entityId || !mediaType || !base64Data) {
           res.writeHead(400); res.end(JSON.stringify({ error: 'Не хватает полей' })); return;
         }
 
-        // Шаг 1: получить presigned URL от AstraMap (от имени пользователя)
-        const presignRes = await fetch(
-          `https://center.astramaps.ru/go/presigned?${new URLSearchParams({ fileName })}`,
-          { headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } }
-        );
-        if (!presignRes.ok) {
-          const txt = await presignRes.text();
-          res.writeHead(502); res.end(JSON.stringify({ error: `presigned ${presignRes.status}: ${txt}` })); return;
-        }
-        const { presignedRequest, permanentURL } = await presignRes.json();
-
-        // Шаг 2: PUT файл в S3 (серверная сторона — нет ограничений браузера)
         const fileBuffer = Buffer.from(base64Data, 'base64');
-        // Стало:
-        const putRes = await fetch(presignedRequest.URL, {
-          method:  'PUT',
-          headers: {
-            'x-amz-acl': 'public-read',
-          },
-          body: fileBuffer,
-          duplex: 'half',
-        });
-        if (!putRes.ok) {
-          const txt = await putRes.text();
-          res.writeHead(502); res.end(JSON.stringify({ error: `S3 PUT ${putRes.status}: ${txt}` })); return;
-        }
+        const origExt    = path.extname(fileName || '').toLowerCase() || (mediaType === 'photo' ? '.jpg' : '.mp4');
+        const safeName   = `${entityId}_${mediaType}_${Date.now()}${origExt}`;
+        const destPath   = path.join(MEDIA_DIR, safeName);
 
-        // Формат mediaItem для AstraMap parameters["8"]
-        const mediaItem = {
-          file: { path: `./${fileName}`, relativePath: `./${fileName}` },
-          type: mediaType === 'photo' ? 'image' : 'video',
-          url:  permanentURL,
-        };
+        fs.writeFileSync(destPath, fileBuffer);
+        log(`📁 Медиа сохранено: ${safeName} (${(fileBuffer.length / 1024).toFixed(0)} КБ)`);
 
-        log(`📤 AstraMap медиа: ${permanentURL}`);
+        // Пишем в target_media
+        db.prepare(`INSERT INTO target_media (entity_id, media_type, file_name, file_size)
+          VALUES (?, ?, ?, ?)`).run(String(entityId), mediaType, safeName, fileBuffer.length);
+
+        // Обновляем флаги в targets
+        try {
+          if (mediaType === 'photo') {
+            db.prepare(`UPDATE targets SET has_photo=1, updated_at=datetime('now') WHERE entity_id=?`).run(String(entityId));
+          } else {
+            db.prepare(`UPDATE targets SET has_video=1, updated_at=datetime('now') WHERE entity_id=?`).run(String(entityId));
+          }
+        } catch {}
+
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, permanentURL, mediaItem }));
+        res.end(JSON.stringify({ ok: true, fileName: safeName }));
 
       } catch (err) {
-        log(`❌ upload-to-astra: ${err.message}`);
+        log(`❌ /media/upload: ${err.message}`);
         res.writeHead(500); res.end(JSON.stringify({ error: err.message }));
       }
     });
+
     req.on('error', () => { if (!res.headersSent) { res.writeHead(500); res.end(); } });
     return;
   }
+if (req.method === 'GET' && urlPath === '/media/list') {
+    const entityId = new URL('http://x' + req.url).searchParams.get('entityId');
+    if (!entityId) { res.writeHead(400); res.end(JSON.stringify({ error: 'entityId required' })); return; }
+    const rows = db.prepare(`SELECT * FROM target_media WHERE entity_id=? ORDER BY created_at ASC`).all(String(entityId));
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, media: rows }));
+    return;
+  }
 
+  if (req.method === 'POST' && urlPath === '/media/delete') {
+    let body = '';
+    req.on('data', chunk => { body += chunk.toString(); });
+    req.on('end', () => {
+      try {
+        const { id } = JSON.parse(body);
+        const row = db.prepare(`SELECT * FROM target_media WHERE id=?`).get(id);
+        if (!row) { res.writeHead(404); res.end(JSON.stringify({ error: 'Not found' })); return; }
+        const filePath = path.join(MEDIA_DIR, row.file_name);
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        db.prepare(`DELETE FROM target_media WHERE id=?`).run(id);
+        const remaining = db.prepare(`SELECT media_type FROM target_media WHERE entity_id=?`).all(row.entity_id);
+        const hasPhoto = remaining.some(r => r.media_type === 'photo') ? 1 : 0;
+        const hasVideo = remaining.some(r => r.media_type === 'video') ? 1 : 0;
+        try { db.prepare(`UPDATE targets SET has_photo=?,has_video=?,updated_at=datetime('now') WHERE entity_id=?`).run(hasPhoto, hasVideo, row.entity_id); } catch {}
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: err.message })); }
+    });
+    return;
+  }
   // ── Отдача медиафайла ──────────────────────────────────────────────────
   if (req.method === 'GET' && urlPath.startsWith('/media/')) {
     const fileName = path.basename(urlPath);
@@ -302,8 +330,18 @@ db.exec(`
     created_at      TEXT    DEFAULT (datetime('now')),
     updated_at      TEXT    DEFAULT (datetime('now'))
   );
+  CREATE TABLE IF NOT EXISTS target_media (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_id  TEXT NOT NULL,
+  media_type TEXT NOT NULL,
+  file_name  TEXT NOT NULL,
+  file_size  INTEGER DEFAULT 0,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+  CREATE INDEX IF NOT EXISTS idx_target_media_entity ON target_media(entity_id);
   CREATE INDEX IF NOT EXISTS idx_targets_date   ON targets(folder_date);
   CREATE INDEX IF NOT EXISTS idx_targets_entity ON targets(entity_id);
+
 `);
 
 // Безопасные миграции для существующих БД
