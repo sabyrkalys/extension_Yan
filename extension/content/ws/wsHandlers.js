@@ -132,6 +132,40 @@ function handleWsMessage(msg) {
         _applyMediaFlags(row, eid);
       });
       console.log(`[ws] ${msg.type}: обновлено ${rows.length} целей`);
+
+      // После TARGETS_SYNCED — SQLite уже содержит актуальные данные.
+      // Запрашиваем адреса для видимых строк (решает проблему новых целей).
+      setTimeout(async () => {
+        const visibleRows = document.querySelectorAll('#statusTable tbody tr[data-target-id]');
+        if (!visibleRows.length) return;
+        const entityIds = [...visibleRows].map(r => r.getAttribute('data-target-id')).filter(Boolean);
+        try {
+          const localRes = await new Promise(resolve =>
+            chrome.runtime.sendMessage({ type: 'GET_LOCAL_TARGETS', entityIds }, (res) => {
+              if (chrome.runtime.lastError) resolve({ ok: false });
+              else resolve(res || { ok: false });
+            })
+          );
+          if (!localRes?.ok || !localRes.targets) return;
+          for (const [eid, local] of Object.entries(localRes.targets)) {
+            const row = document.querySelector(`#statusTable tr[data-target-id="${eid}"]`);
+            if (!row) continue;
+            // Адрес — обновляем если пришёл и ячейка пустая
+            if (local.address) {
+              const span = row.cells[3]?.querySelector('span');
+              if (span && !span.innerText) {
+                span.innerText = local.address;
+                span.title     = local.address;
+              }
+            }
+            // Медиа-флаги
+            if (local.has_photo !== undefined) _mediaFlags[eid + '_photo'] = !!local.has_photo;
+            if (local.has_video !== undefined) _mediaFlags[eid + '_video'] = !!local.has_video;
+            _applyMediaFlags(row, eid);
+          }
+        } catch {}
+      }, 300);
+
       break;
     }
 
