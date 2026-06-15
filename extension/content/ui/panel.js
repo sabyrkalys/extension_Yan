@@ -785,7 +785,11 @@ function createPopup() {
       if (newEntityId) {
         await new Promise(r => setTimeout(r, 700));
 
-        if (address) wsSend({ type: 'UPDATE_TARGET_LOCAL', entity_id: String(newEntityId), address });
+        if (address) {
+          // Ждём чтобы SYNC_TARGETS успел создать строку в SQLite
+          await new Promise(r => setTimeout(r, 800));
+          wsSend({ type: 'UPDATE_TARGET_LOCAL', entity_id: String(newEntityId), address });
+        }
 
         // Загружаем фото (несколько)
         let hasPhoto = 0, hasVideo = 0;

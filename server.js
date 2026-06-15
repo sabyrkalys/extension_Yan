@@ -724,19 +724,29 @@ wss.on('connection', (ws, req) => {
       }
 
       case 'UPDATE_TARGET_LOCAL': {
-        const { entity_id } = msg;
+        const { entity_id, address, has_photo, has_video, defeat_date, notes } = msg;
         if (!entity_id) break;
-        stmt.updateTargetLocal.run({
-          entity_id,
-          address:     msg.address     !== undefined ? msg.address     : null,
-          has_photo:   msg.has_photo   !== undefined ? msg.has_photo   : null,
-          has_video:   msg.has_video   !== undefined ? msg.has_video   : null,
-          defeat_date: msg.defeat_date !== undefined ? msg.defeat_date : null,
-          notes:       msg.notes       !== undefined ? msg.notes       : null,
-        });
-        const updated = stmt.getTargetByEntityId.get(entity_id);
-        log(`✏️  UPDATE_TARGET_LOCAL: цель ${entity_id} от ${myRole}[${myOfficeId}]`);
-        broadcastAll({ type:'TARGET_UPDATED', target:updated });
+        // Создаём строку если не существует
+        db.prepare(`INSERT OR IGNORE INTO targets (entity_id) VALUES (?)`).run(String(entity_id));
+        // Обновляем только переданные поля
+        db.prepare(`
+          UPDATE targets SET
+            address     = COALESCE(?, address),
+            has_photo   = COALESCE(?, has_photo),
+            has_video   = COALESCE(?, has_video),
+            defeat_date = COALESCE(?, defeat_date),
+            notes       = COALESCE(?, notes),
+            updated_at  = datetime('now')
+          WHERE entity_id = ?
+        `).run(
+          address   ?? null,
+          has_photo ?? null,
+          has_video ?? null,
+          defeat_date ?? null,
+          notes     ?? null,
+          String(entity_id)
+        );
+        broadcast({ type: 'TARGET_UPDATED', entity_id: String(entity_id), address, has_photo, has_video });
         break;
       }
 
