@@ -745,6 +745,7 @@ wss.on('connection', (ws, req) => {
           defeat_date ?? null,
           notes     ?? null,
           String(entity_id)
+
         );
         broadcast({ type: 'TARGET_UPDATED', entity_id: String(entity_id), address, has_photo, has_video });
         break;

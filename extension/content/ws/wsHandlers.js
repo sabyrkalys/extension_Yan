@@ -41,10 +41,10 @@ function handleWsMessage(msg) {
       _updateTasksByTarget(task);
       refreshTaskCellByTargetId(task);
 
-      const seenTaskIds  = store.get('seenTaskIds');
-      const myOfficeId   = store.get('myOfficeId') || 'HQ';
-      const toRole       = task.to_role || task.to || '';
-      const toOffice     = task.to_office || '';
+      const seenTaskIds = store.get('seenTaskIds');
+      const myOfficeId  = store.get('myOfficeId') || 'HQ';
+      const toRole      = task.to_role || task.to || '';
+      const toOffice    = task.to_office || '';
 
       const isForMe = toRole === myRole
         && (toOffice === '' || toOffice === myOfficeId);
@@ -137,25 +137,54 @@ function handleWsMessage(msg) {
 
     // ── Один объект обновлён (адрес, медиа, заметки) ─────────────────────
     case 'TARGET_UPDATED': {
-      const target = msg.target;
-      if (!target?.entity_id) break;
-      const eid = String(target.entity_id);
-      if (target.has_photo !== undefined) _mediaFlags[eid + '_photo'] = !!target.has_photo;
-      if (target.has_video !== undefined) _mediaFlags[eid + '_video'] = !!target.has_video;
+      // Поддержка обоих форматов: { entity_id, address } и { target: { entity_id, address } }
+      const eid = String(msg.entity_id || msg.target?.entity_id || '');
+      if (!eid) break;
+
+      const hasPhoto = msg.has_photo ?? msg.target?.has_photo;
+      const hasVideo = msg.has_video ?? msg.target?.has_video;
+      const address  = msg.address  ?? msg.target?.address;
+
+      if (hasPhoto !== undefined) _mediaFlags[eid + '_photo'] = !!hasPhoto;
+      if (hasVideo !== undefined) _mediaFlags[eid + '_video'] = !!hasVideo;
+
       const row = document.querySelector(`#statusTable tr[data-target-id="${eid}"]`);
       if (!row) break;
-      // Адрес
-      if (target.address !== undefined) {
+
+      // Адрес — обновляем всегда когда пришёл
+      if (address !== undefined) {
         const placeSpan = row.cells[3]?.querySelector('span');
         if (placeSpan) {
-          placeSpan.innerText = target.address || '';
-          placeSpan.title     = target.address || 'Адрес не указан';
+          placeSpan.innerText = address || '';
+          placeSpan.title     = address || 'Адрес не указан';
         }
       }
+
       // Медиа-кнопки
       _applyMediaFlags(row, eid);
       break;
     }
+
+    case 'AUTH_ERROR':
+      console.warn('[ws] AUTH_ERROR:', msg.text);
+      break;
+
+    case 'DRAFT_CHECK_RESULT': {
+      if (msg.hasDraft) addDraftDateBtn(msg.planDate);
+      break;
+    }
+
+    case 'DRAFT_PLANS_RESULT': {
+      const pending = window._pendingPublish;
+      if (!pending) break;
+      window._pendingPublish = null;
+      executePlanPublish(pending.planDate, msg.plans || [], pending.folderId);
+      break;
+    }
+
+    case 'PLAN_PUBLISHED':
+      showToast('✅ План опубликован', 'success');
+      break;
 
     case 'ERROR':
       showToast('Сервер: ' + (msg.text || 'ошибка'), 'error');
@@ -166,7 +195,7 @@ function handleWsMessage(msg) {
   }
 }
 
-// Вспомогательная — обновляет медиа-кнопки в строке по _mediaFlags
+// ── Вспомогательная — обновляет медиа-кнопки в строке по _mediaFlags ─────────
 function _applyMediaFlags(row, entityId) {
   const mediaWrap = row.querySelector('.media-btns');
   if (!mediaWrap) return;
@@ -176,8 +205,10 @@ function _applyMediaFlags(row, entityId) {
     const count = _mediaFlags[entityId + '_' + mediaType + '_count'] || 0;
     const emoji = mediaType === 'photo' ? '📷' : '🎥';
 
-    btn.innerHTML = count > 0 ? `${emoji} <span style="font-size:9px;">${count}</span>` : emoji;
-    btn.title     = on
+    btn.innerHTML = count > 0
+      ? `${emoji} <span style="font-size:9px;">${count}</span>`
+      : emoji;
+    btn.title = on
       ? `${mediaType === 'photo' ? 'Фото' : 'Видео'}: ${count} шт. — клик для галереи`
       : `Нет ${mediaType === 'photo' ? 'фото' : 'видео'} — клик для добавления`;
     btn.style.background = on ? '#28a745' : '#dee2e6';
