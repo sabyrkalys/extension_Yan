@@ -1479,7 +1479,10 @@ async function loadTargetsFromFolder(folderIds, dateKey, forceRefresh = false) {
   } catch (err) {
     console.warn('[hydrate] Ошибка обогащения из SQLite:', err.message);
   }
-  
+  // Перерисовываем таблицу с обогащёнными данными если активна эта дата
+  if (activeFolderDate === dateKey && tableRows.length > 0) {
+    populateTable(tableRows);
+  }
   // Синкаем в SQLite через WS (фоново, не блокирует UI)
   if (tableRows.length > 0 && myRole) {
     const syncPayload = tableRows.map(row => ({
