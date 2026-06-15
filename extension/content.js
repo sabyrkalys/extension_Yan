@@ -1447,7 +1447,39 @@ async function loadTargetsFromFolder(folderIds, dateKey, forceRefresh = false) {
     const tb = b.impactTime || '';
     return tb.localeCompare(ta);
   });
-
+  // ── Обогащаем данными из SQLite (адрес, медиа-флаги, заметки) ────────────
+  // Sequential approach: грузим локальные данные ДО рендера таблицы
+  try {
+    const entityIds = tableRows.map(r => String(r.targetNumber)).filter(Boolean);
+    if (entityIds.length) {
+      const localRes = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({ type: 'GET_LOCAL_TARGETS', entityIds }, (res) => {
+          if (chrome.runtime.lastError) resolve({ ok: false });
+          else resolve(res || { ok: false });
+        });
+      });
+      if (localRes?.ok && localRes.targets) {
+        const localData = localRes.targets;
+        tableRows.forEach(row => {
+          const local = localData[String(row.targetNumber)];
+          if (!local) return;
+          if (local.address)   row.place     = local.address;
+          if (local.has_photo) row.has_photo  = local.has_photo;
+          if (local.has_video) row.has_video  = local.has_video;
+          if (local.notes)     row.notes      = local.notes;
+          // Предзаполняем _mediaFlags до рендера
+          if (local.has_photo !== undefined)
+            _mediaFlags[String(row.targetNumber) + '_photo'] = !!local.has_photo;
+          if (local.has_video !== undefined)
+            _mediaFlags[String(row.targetNumber) + '_video'] = !!local.has_video;
+        });
+        console.log(`[hydrate] Обогащено ${Object.keys(localData).length} целей из SQLite`);
+      }
+    }
+  } catch (err) {
+    console.warn('[hydrate] Ошибка обогащения из SQLite:', err.message);
+  }
+  
   // Синкаем в SQLite через WS (фоново, не блокирует UI)
   if (tableRows.length > 0 && myRole) {
     const syncPayload = tableRows.map(row => ({

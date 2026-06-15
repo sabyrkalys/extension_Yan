@@ -198,6 +198,23 @@ if (req.method === 'GET' && urlPath === '/media/list') {
     res.end(JSON.stringify({ ok: true, counts }));
     return;
   }
+
+  if (req.method === 'GET' && urlPath === '/targets/local') {
+    const raw = new URL('http://x' + req.url).searchParams.get('entityIds');
+    if (!raw) { res.writeHead(400); res.end(JSON.stringify({ error: 'entityIds required' })); return; }
+    const ids     = raw.split(',').filter(Boolean);
+    const targets = {};
+    for (const id of ids) {
+      const row = db.prepare(
+        `SELECT address, has_photo, has_video, notes FROM targets WHERE entity_id = ?`
+      ).get(id);
+      if (row) targets[id] = row;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, targets }));
+    return;
+  }
+  
   // ── Отдача медиафайла ──────────────────────────────────────────────────
   if (req.method === 'GET' && urlPath.startsWith('/media/')) {
     const fileName = path.basename(urlPath);

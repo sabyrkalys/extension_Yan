@@ -244,6 +244,20 @@ async function handleGetMediaCounts({ entityIds }) {
   }
 }
 
+
+// ── Получить локальные данные целей из SQLite (адрес, медиа-флаги, заметки) ──
+async function handleGetLocalTargets({ entityIds }) {
+  try {
+    const ids = (entityIds || []).filter(Boolean).join(',');
+    if (!ids) return { ok: true, targets: {} };
+    const res = await fetch(`${HTTP_URL}/targets/local?entityIds=${encodeURIComponent(ids)}`);
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+    return await res.json();
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
 // ── Обработчик одноразовых сообщений от content script ───────────────────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'UPLOAD_MEDIA') {
@@ -256,6 +270,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'DELETE_MEDIA') {
     handleDeleteMedia(msg).then(sendResponse).catch(err => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+  if (msg.type === 'GET_LOCAL_TARGETS') {
+    handleGetLocalTargets(msg).then(sendResponse).catch(err => sendResponse({ ok: false, error: err.message }));
     return true;
   }
   if (msg.type === 'GET_MEDIA_COUNTS') {
