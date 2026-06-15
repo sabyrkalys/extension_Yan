@@ -760,7 +760,26 @@ function createPopup() {
       if (!newEntityId) console.warn('[addTarget] entity_id не найден:', astraResult);
 
       // Шаг 2: перезагрузить таблицу
-      await loadByDateFromPanel(_targetDate);
+      // Ждём чтобы AstraMap проиндексировал новый объект
+      showToast('⏳ Обновляем таблицу...', 'info');
+      await new Promise(r => setTimeout(r, 1500));
+
+      // Сбрасываем кэш и грузим заново принудительно
+      cacheDelete(CACHE_KEY_PREFIX + _targetDate);
+      const _freshTree  = JSON.parse(localStorage.getItem(CACHE_KEY_DATES) || 'null');
+      const _freshEntry = (_freshTree?.dates || []).find(d => d.date === _targetDate);
+      if (_freshEntry) {
+        const freshRows = await loadTargetsFromFolder(
+          _freshEntry.folderIds || _freshEntry.folderId, _targetDate, true  // forceRefresh
+        );
+        populateTable(freshRows);
+        refreshAllTaskCells();
+        updateUndefeatedBadge(_targetDate, freshRows);
+        // Асинхронно обновляем бейджи медиа
+        setTimeout(() => { if (typeof loadMediaCountsAsync === 'function') loadMediaCountsAsync(); }, 500);
+      } else {
+        await loadByDateFromPanel(_targetDate);
+      }
 
       // Шаг 3: локальные поля (после SYNC_TARGETS)
       if (newEntityId) {
