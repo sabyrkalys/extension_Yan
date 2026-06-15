@@ -786,9 +786,15 @@ function createPopup() {
         await new Promise(r => setTimeout(r, 700));
 
         if (address) {
-          // Ждём чтобы SYNC_TARGETS успел создать строку в SQLite
           await new Promise(r => setTimeout(r, 800));
           wsSend({ type: 'UPDATE_TARGET_LOCAL', entity_id: String(newEntityId), address });
+          // Напрямую обновляем DOM — не ждём TARGET_UPDATED
+          await new Promise(r => setTimeout(r, 500));
+          const newRow = document.querySelector(`#statusTable tr[data-target-id="${newEntityId}"]`);
+          if (newRow) {
+            const span = newRow.cells[3]?.querySelector('span');
+            if (span) { span.innerText = address; span.title = address; }
+          }
         }
 
         // Загружаем фото (несколько)
