@@ -164,7 +164,7 @@ function handleWsMessage(msg) {
             _applyMediaFlags(row, eid);
           }
         } catch {}
-      }, 300);
+      }, 500);
 
       break;
     }
