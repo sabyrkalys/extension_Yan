@@ -559,17 +559,6 @@ function createPopup() {
         <label>Категория цели:</label>
         <select id="targetType">
           <option value="" disabled selected>— Выберите категорию —</option>
-          <option value="ПУ">ПУ</option><option value="ПУ БПЛА">ПУ БПЛА</option>
-          <option value="Точка влета">Точка взлёта</option><option value="РЛС">РЛС</option>
-          <option value="РЭБ">РЭБ</option><option value="Связь">Связь</option>
-          <option value="ЗРК">ЗРК</option><option value="ПЗРК">ПЗРК</option>
-          <option value="Танк">Танк</option><option value="БМП">БМП</option>
-          <option value="ББМ">ББМ</option><option value="БТР">БТР</option>
-          <option value="Гаубица">Гаубица</option><option value="САУ">САУ</option>
-          <option value="РСЗО">РСЗО</option><option value="Миномёт">Миномёт</option>
-          <option value="Склад">Склад</option><option value="КНП">КНП</option>
-          <option value="Укрытие">Укрытие</option><option value="Блиндаж">Блиндаж</option>
-          <option value="Личный состав">Личный состав</option>
         </select>
         <label>Адрес / местность объекта:</label>
         <input id="targetAddress" type="text" placeholder="н-р: лесной массив, 500м с. н.п. Петровка" />
@@ -687,7 +676,11 @@ function createPopup() {
 
   popupElement.style.display = 'none';
   document.body.appendChild(popupElement);
-
+    // Заполняем select категорий из config.js (двухуровневый)
+  const typeSelectEl = popupElement.querySelector('#targetType');
+  if (typeSelectEl && typeof buildTypeSelect === 'function') {
+    buildTypeSelect(typeSelectEl, '');
+  }
   if (typeof _renderOnlineIndicator === 'function') _renderOnlineIndicator();
   if (typeof updateRoleTag === 'function') updateRoleTag();
 
@@ -726,7 +719,8 @@ function createPopup() {
   const submitBtn = popupElement.querySelector('#submitAddTarget');
   submitBtn.addEventListener('click', withLock(submitBtn, async () => {
     try {
-      const characteristic = popupElement.querySelector('#targetType').value;
+      const typeCode       = popupElement.querySelector('#targetType').value;
+      const characteristic = TARGET_TYPE_MAP[typeCode] || typeCode;
       const coordX         = popupElement.querySelector('#coordX').value.trim();
       const coordY         = popupElement.querySelector('#coordY').value.trim();
       const address        = popupElement.querySelector('#targetAddress').value.trim();

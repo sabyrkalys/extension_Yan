@@ -18,7 +18,7 @@ function mapResult(result) {
 }
 
 function mapTargetType(characteristic) {
-  return TARGET_TYPE_TO_ID[characteristic] || '1100000';
+  return characteristic || '1100000';
 }
 
 function parseCoord(coordStr) {
