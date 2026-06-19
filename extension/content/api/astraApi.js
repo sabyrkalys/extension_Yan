@@ -28,18 +28,13 @@ function parseCoord(coordStr) {
 }
 
 // ── Медиа: получить presigned URL от AstraMap ─────────────────────────────────
-// AstraMap хранит медиафайлы в S3/MinIO.
-// Шаг 1: GET /go/presigned?fileName=... → presignedRequest.URL + permanentURL
-// Шаг 2: PUT файл по presignedRequest.URL
-// Шаг 3: передать permanentURL в parameters["8"] при создании/обновлении объекта
 async function apiGetPresignedUrl(fileName) {
   const url = `https://center.astramaps.ru/go/presigned?${new URLSearchParams({ fileName })}`;
   const res = await fetch(url, { headers: apiHeaders() });
   if (!res.ok) throw new Error(`presigned HTTP ${res.status}`);
-  return res.json(); // { presignedRequest: { URL, Method, SignedHeader }, permanentURL }
+  return res.json();
 }
 
-// Шаг 2: загрузить файл по presigned URL напрямую в S3
 async function apiPutFileToS3(presignedUrl, file) {
   const res = await fetch(presignedUrl, {
     method:  'PUT',
@@ -73,10 +68,8 @@ async function apiGetHeightAtPoint(lon, lat) {
 }
 
 // Создать / обновить объект на карте
-// mediaItems — массив медиафайлов для parameters["8"]:
-//   [{ file: { path, relativePath }, type: "image"|"video", url: permanentURL }]
 async function apiSendTarget(rowData, parentFolderId, mediaItems = []) {
-  const { targetNumber, characteristic, coordX, coordY, impactTime, result, defeatDate } = rowData;
+  const { targetNumber, characteristic, typeName, coordX, coordY, impactTime, result, defeatDate } = rowData;
 
   const sk42easting  = parseFloat(coordY);
   const sk42northing = parseFloat(coordX);
@@ -104,7 +97,7 @@ async function apiSendTarget(rowData, parentFolderId, mediaItems = []) {
     'Танк':      '#795548',
   };
 
-  const title       = characteristic || `Цель №${targetNumber || '-'}`;
+  const title       = typeName || TARGET_TYPE_MAP[characteristic] || characteristic || `Цель №${targetNumber || '-'}`;
   const color       = colorMap[characteristic] || '#888888';
   const datetimeISO = toISOWithTime(defeatDate, impactTime);
 
@@ -120,7 +113,7 @@ async function apiSendTarget(rowData, parentFolderId, mediaItems = []) {
       '5':  { value: color },
       '6':  { value: mapTargetType(characteristic) },
       '7':  { value: mapResult(result) },
-      '8':  { value: mediaItems },       // ← медиафайлы (пустой массив если не загружались)
+      '8':  { value: mediaItems },
       '9':  { value: 'ВР Войсковая разведка' },
       '10': { value: 'Почти наверняка' },
       '11': { value: 'Актуально' },

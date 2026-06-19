@@ -720,7 +720,8 @@ function createPopup() {
   submitBtn.addEventListener('click', withLock(submitBtn, async () => {
     try {
       const typeCode       = popupElement.querySelector('#targetType').value;
-      const characteristic = TARGET_TYPE_MAP[typeCode] || typeCode;
+      const typeName       = TARGET_TYPE_MAP[typeCode] || typeCode; // для title
+      const characteristic = typeCode; // код для AstraMap параметр 6
       const coordX         = popupElement.querySelector('#coordX').value.trim();
       const coordY         = popupElement.querySelector('#coordY').value.trim();
       const address        = popupElement.querySelector('#targetAddress').value.trim();
@@ -733,7 +734,7 @@ function createPopup() {
       if (!characteristic) { showToast('❌ Выберите категорию цели', 'error'); return; }
       if (!coordX || !coordY) { showToast('❌ Введите координаты X и Y', 'error'); return; }
 
-      const rowData = { targetNumber: '0', characteristic, coordX, coordY, impactTime, result, defeatDate: impactDate };
+      const rowData = { targetNumber: '0', characteristic, typeName, coordX, coordY, impactTime, result, defeatDate: impactDate };
 
       const _today      = getMoscowDateStr();
       const _tree       = JSON.parse(localStorage.getItem(CACHE_KEY_DATES) || 'null');
