@@ -159,6 +159,16 @@ function handleWsMessage(msg) {
               }
             }
             // Медиа-флаги
+            // Координаты СК-42 из SQLite (исходные, без двойной конвертации)
+            if (local.coord_x) {
+              const cellX = row.cells[4];
+              if (cellX) cellX.innerText = local.coord_x;
+            }
+            if (local.coord_y) {
+              const cellY = row.cells[5];
+              if (cellY) cellY.innerText = local.coord_y;
+            }
+            // Медиа-флаги
             if (local.has_photo !== undefined) _mediaFlags[eid + '_photo'] = !!local.has_photo;
             if (local.has_video !== undefined) _mediaFlags[eid + '_video'] = !!local.has_video;
             _applyMediaFlags(row, eid);
@@ -192,6 +202,16 @@ function handleWsMessage(msg) {
           placeSpan.innerText = address || '';
           placeSpan.title     = address || 'Адрес не указан';
         }
+      }
+
+      // Координаты
+      if (msg.coord_x) {
+        const cellX = row.cells[4];
+        if (cellX) cellX.innerText = msg.coord_x;
+      }
+      if (msg.coord_y) {
+        const cellY = row.cells[5];
+        if (cellY) cellY.innerText = msg.coord_y;
       }
 
       // Медиа-кнопки

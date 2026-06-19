@@ -785,15 +785,25 @@ function createPopup() {
       if (newEntityId) {
         await new Promise(r => setTimeout(r, 700));
 
-        if (address) {
+        if (address || coordX || coordY) {
           await new Promise(r => setTimeout(r, 800));
-          wsSend({ type: 'UPDATE_TARGET_LOCAL', entity_id: String(newEntityId), address });
-          // Напрямую обновляем DOM — не ждём TARGET_UPDATED
+          wsSend({
+            type:      'UPDATE_TARGET_LOCAL',
+            entity_id: String(newEntityId),
+            address:   address || undefined,
+            coord_x:   coordX  || undefined,
+            coord_y:   coordY  || undefined,
+          });
+          // Напрямую обновляем DOM
           await new Promise(r => setTimeout(r, 500));
           const newRow = document.querySelector(`#statusTable tr[data-target-id="${newEntityId}"]`);
           if (newRow) {
-            const span = newRow.cells[3]?.querySelector('span');
-            if (span) { span.innerText = address; span.title = address; }
+            if (address) {
+              const span = newRow.cells[3]?.querySelector('span');
+              if (span) { span.innerText = address; span.title = address; }
+            }
+            if (coordX) newRow.cells[4].innerText = coordX;
+            if (coordY) newRow.cells[5].innerText = coordY;
           }
         }
 

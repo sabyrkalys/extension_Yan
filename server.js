@@ -741,11 +741,9 @@ wss.on('connection', (ws, req) => {
       }
 
       case 'UPDATE_TARGET_LOCAL': {
-        const { entity_id, address, has_photo, has_video, defeat_date, notes } = msg;
+        const { entity_id, address, has_photo, has_video, defeat_date, notes, coord_x, coord_y } = msg;
         if (!entity_id) break;
-        // Создаём строку если не существует
         db.prepare(`INSERT OR IGNORE INTO targets (entity_id) VALUES (?)`).run(String(entity_id));
-        // Обновляем только переданные поля
         db.prepare(`
           UPDATE targets SET
             address     = COALESCE(?, address),
@@ -753,18 +751,21 @@ wss.on('connection', (ws, req) => {
             has_video   = COALESCE(?, has_video),
             defeat_date = COALESCE(?, defeat_date),
             notes       = COALESCE(?, notes),
+            coord_x     = COALESCE(?, coord_x),
+            coord_y     = COALESCE(?, coord_y),
             updated_at  = datetime('now')
           WHERE entity_id = ?
         `).run(
-          address   ?? null,
-          has_photo ?? null,
-          has_video ?? null,
+          address     ?? null,
+          has_photo   ?? null,
+          has_video   ?? null,
           defeat_date ?? null,
-          notes     ?? null,
+          notes       ?? null,
+          coord_x     ?? null,
+          coord_y     ?? null,
           String(entity_id)
-
         );
-        broadcast({ type: 'TARGET_UPDATED', entity_id: String(entity_id), address, has_photo, has_video });
+        broadcast({ type: 'TARGET_UPDATED', entity_id: String(entity_id), address, has_photo, has_video, coord_x, coord_y });
         break;
       }
 
