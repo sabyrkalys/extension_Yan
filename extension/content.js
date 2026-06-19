@@ -566,70 +566,29 @@ function getTableData() {
   return data;
 }
 
-// ── Иерархические категории целей ────────────────────────────────────────────
-const CHAR_CATEGORIES = [
-  { group: 'Пункты управления', opts: [
-    'ПУ', 'КНП', 'ПУ армии', 'ПУ корпуса', 'ПУ дивизии',
-    'ПУ бригады', 'ПУ полка', 'ПУ батальона', 'ПУ роты',
-  ]},
-  { group: 'Бронетехника', opts: [
-    'Танк', 'БМП', 'ББМ', 'БТР', 'БРДМ', 'БМД', 'МТ-ЛБ', 'Бронеавтомобиль',
-  ]},
-  { group: 'Артиллерия', opts: [
-    'Гаубица', 'САУ', 'РСЗО', 'Миномёт', 'Пушка', 'ПТРК',
-  ]},
-  { group: 'ПВО / ЗРК', opts: [
-    'ЗРК', 'ПЗРК', 'ЗРК малой дальн.', 'ЗРК средней дальн.', 'ЗРК большой дальн.', 'ЗАК',
-  ]},
-  { group: 'РЛС', opts: [
-    'РЛС', 'РЛС АРТ', 'РЛС ПВО', 'РЛС БПЛА', 'РЛС разв.',
-  ]},
-  { group: 'РЭБ', opts: [
-    'РЭБ', 'РЭБ (станция)', 'РЭБ (комплекс)', 'РЭБ БПЛА',
-  ]},
-  { group: 'БПЛА', opts: [
-    'БПЛА', 'ПУ БПЛА', 'Точка влета', 'БПЛА разв.', 'Аэродром БПЛА',
-  ]},
-  { group: 'Связь', opts: [
-    'Связь', 'Узел связи', 'Ретранслятор', 'Радиостанция',
-  ]},
-  { group: 'Укрытия / Позиции', opts: [
-    'Укрытие', 'Блиндаж', 'Окоп', 'Траншея', 'ДОТ', 'Позиция', 'Рубеж',
-  ]},
-  { group: 'Склады', opts: [
-    'Склад', 'Склад БП', 'Склад ГСМ', 'Склад техники',
-  ]},
-  { group: 'Прочее', opts: [
-    'Личный состав', 'Авиация', 'Инженерные объекты', 'Тыловые объекты',
-    'Инфраструктура', 'Гражданский объект', 'Местный предмет',
-  ]},
-];
-
 function buildCharSelect(currentVal) {
   const sel = document.createElement('select');
   sel.style.cssText = 'width:100%;font-size:11px;padding:2px 3px;border-radius:4px;border:1px solid #ccc;';
-  const defOpt = document.createElement('option');
-  defOpt.value = ''; defOpt.textContent = '— Характер —';
-  if (!currentVal) defOpt.selected = true;
-  sel.appendChild(defOpt);
 
-  for (const grp of CHAR_CATEGORIES) {
-    const og = document.createElement('optgroup');
-    og.label = grp.group;
-    for (const cat of grp.opts) {
-      const o = document.createElement('option');
-      o.value = cat; o.textContent = cat;
-      if (cat === currentVal) o.selected = true;
-      og.appendChild(o);
-    }
-    sel.appendChild(og);
+  // Используем TARGET_TYPE_GROUPS из config.js
+  if (typeof buildTypeSelect === 'function') {
+    buildTypeSelect(sel, currentVal);
+  } else {
+    const opt = document.createElement('option');
+    opt.value = currentVal || '';
+    opt.textContent = TARGET_TYPE_MAP?.[currentVal] || currentVal || '— Характер —';
+    sel.appendChild(opt);
   }
-  // Если значение из TARGET_TYPE_MAP не в списке — добавляем отдельным option
-  if (currentVal && !sel.querySelector(`option[value="${CSS.escape(currentVal)}"]`)) {
+
+  // Если значение не найдено в группах — добавляем отдельно
+  if (currentVal && !sel.querySelector(`option[value="${currentVal}"]`)) {
     const extra = document.createElement('option');
-    extra.value = currentVal; extra.textContent = currentVal; extra.selected = true;
-    sel.insertBefore(extra, sel.options[1]);
+    extra.value = currentVal;
+    extra.textContent = TARGET_TYPE_MAP?.[currentVal] || currentVal;
+    extra.selected = true;
+    sel.appendChild(extra); // appendChild вместо insertBefore — без ошибок
   }
+
   return sel;
 }
 
