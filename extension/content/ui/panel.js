@@ -348,25 +348,21 @@ async function renderUnitsDashboard() {
       const folderId = parseInt(card.getAttribute('data-folder-id'));
       const unitName = card.getAttribute('data-unit-name');
 
-      _showTableView();
-      document.querySelector('#currentUnitLabel').textContent = `📂 ${unitName} — ${today.slice(8)}.${today.slice(5,7)}.${today.slice(0,4)}`;
-      showToast(`⏳ Загружаем цели: ${unitName}...`, 'info');
+  _showTableView();
+  document.querySelector('#currentUnitLabel').textContent = `📂 ${unitName} — ${today.slice(8)}.${today.slice(5,7)}.${today.slice(0,4)}`;
+  showToast(`⏳ Загружаем цели: ${unitName}...`, 'info');
 
   try {
     const rows = await loadTargetsFromFolder(folderId, today, true);
-      console.log('[dashboard] row[0]:', JSON.stringify(rows[0], null, 2));
-      console.log('[dashboard] всего строк:', rows.length);
-    // Фильтруем только за сегодня
-    const todayRows = rows.filter(r => {
-      const d = r.createdAt || r.date || r.impactDate || '';
-      return d.startsWith(today);
-    });
-      console.log(`[dashboard] Загружено целей для ${unitName}:`, todayRows);
-    // Сортируем по createdAt до секунды (новые сверху)
+
+    // Фильтруем только за сегодня по defeatDate
+    const todayRows = rows.filter(r => (r.defeatDate || '').startsWith(today));
+
+    // Сортируем по времени до секунды (новые сверху)
     todayRows.sort((a, b) => {
-      const ca = a.createdAt || a.date || '';
-      const cb = b.createdAt || b.date || '';
-      return cb.localeCompare(ca);
+      const ta = (a.defeatDate || '') + 'T' + (a.impactTime || '');
+      const tb = (b.defeatDate || '') + 'T' + (b.impactTime || '');
+      return tb.localeCompare(ta);
     });
 
     populateTable(todayRows);
@@ -375,7 +371,7 @@ async function renderUnitsDashboard() {
   } catch(e) {
     showToast('❌ Ошибка загрузки: ' + e.message, 'error');
   }
-    });
+});
   });
 }
 
