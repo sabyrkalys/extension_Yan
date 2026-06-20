@@ -560,6 +560,10 @@ function createPopup() {
         <select id="targetType">
           <option value="" disabled selected>— Выберите категорию —</option>
         </select>
+        <label>Подразделение:</label>
+          <select id="targetUnit">
+            <option value="" disabled selected>— Выберите подразделение —</option>
+          </select>
         <label>Адрес / местность объекта:</label>
         <input id="targetAddress" type="text" placeholder="н-р: лесной массив, 500м с. н.п. Петровка" />
         <div style="display:flex;gap:10px;">
@@ -680,6 +684,16 @@ function createPopup() {
   const typeSelectEl = popupElement.querySelector('#targetType');
   if (typeSelectEl && typeof buildTypeSelect === 'function') {
     buildTypeSelect(typeSelectEl, '');
+    // Заполняем select подразделений
+    const unitSelectEl = popupElement.querySelector('#targetUnit');
+    if (unitSelectEl && typeof UNIT_FOLDERS !== 'undefined') {
+      Object.entries(UNIT_FOLDERS).forEach(([key, unit]) => {
+        const opt = document.createElement('option');
+        opt.value = unit.folderId;
+        opt.textContent = unit.name;
+        unitSelectEl.appendChild(opt);
+      });
+  }
   }
   if (typeof _renderOnlineIndicator === 'function') _renderOnlineIndicator();
   if (typeof updateRoleTag === 'function') updateRoleTag();
@@ -730,7 +744,10 @@ function createPopup() {
       const impactTime     = popupElement.querySelector('#impactTime').value;
       const impactDate     = popupElement.querySelector('#impactDate').value;
       const result         = popupElement.querySelector('#impactResult').value;
-
+      
+      if (!typeCode) { showToast('❌ Выберите категорию цели', 'error'); return; }
+      if (!selectedUnit) { showToast('❌ Выберите подразделение', 'error'); return; }
+      if (!coordX || !coordY) { showToast('❌ Введите координаты X и Y', 'error'); return; }
       if (!characteristic) { showToast('❌ Выберите категорию цели', 'error'); return; }
       if (!coordX || !coordY) { showToast('❌ Введите координаты X и Y', 'error'); return; }
 
@@ -740,7 +757,8 @@ function createPopup() {
       const _tree       = JSON.parse(localStorage.getItem(CACHE_KEY_DATES) || 'null');
       const _targetDate = activeFolderDate || _today;
       const _entry      = (_tree?.dates || []).find(d => d.date === _targetDate);
-      const _folderId   = _entry?.folderId || latestFolderId;
+      const selectedUnit = popupElement.querySelector('#targetUnit').value;
+      const _folderId    = selectedUnit ? parseInt(selectedUnit) : (_entry?.folderId || latestFolderId);
 
       // Шаг 1: создать объект в AstraMap (без медиа)
       let astraResult = null;
