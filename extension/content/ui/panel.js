@@ -345,52 +345,35 @@ async function renderUnitsDashboard() {
   // Клик по карточке → загрузить таблицу
   dash.querySelectorAll('[data-unit-key]').forEach(card => {
     card.addEventListener('click', async () => {
-      const folderId  = parseInt(card.getAttribute('data-folder-id'));
-      const unitName  = card.getAttribute('data-unit-name');
+      const folderId = parseInt(card.getAttribute('data-folder-id'));
+      const unitName = card.getAttribute('data-unit-name');
 
       _showTableView();
       document.querySelector('#currentUnitLabel').textContent = `📂 ${unitName} — ${today.slice(8)}.${today.slice(5,7)}.${today.slice(0,4)}`;
       showToast(`⏳ Загружаем цели: ${unitName}...`, 'info');
 
-      try {
-        // 1. Получаем все сущности из папки
-        const allEntities = await apiFetchTargetsInFolder(folderId, null);
+  try {
+    const rows = await loadTargetsFromFolder(folderId, today, true);
 
-        // 2. Фильтруем только за сегодня
-        const todayEntities = allEntities.filter(e => {
-          const created = e.entity?.createdAt || e.createdAt || '';
-          return created.startsWith(today);
-        });
+    // Фильтруем только за сегодня
+    const todayRows = rows.filter(r => {
+      const d = r.createdAt || r.date || r.impactDate || '';
+      return d.startsWith(today);
+    });
 
-        // 3. Сортируем по времени до секунды (новые сверху)
-        todayEntities.sort((a, b) => {
-          const ca = a.entity?.createdAt || a.createdAt || '';
-          const cb = b.entity?.createdAt || b.createdAt || '';
-          return cb.localeCompare(ca);
-        });
+    // Сортируем по createdAt до секунды (новые сверху)
+    todayRows.sort((a, b) => {
+      const ca = a.createdAt || a.date || '';
+      const cb = b.createdAt || b.date || '';
+      return cb.localeCompare(ca);
+    });
 
-        // 4. Загружаем строки с SQLite-обогащением
-        const rows = await loadTargetsFromFolder(folderId, today, true);
-
-        // 5. Фильтруем строки только за сегодня по ID
-        const todayIds = new Set(todayEntities.map(e => String(e.entity?.id || e.id)));
-        const todayRows = rows.filter(r => todayIds.has(String(r.entity_id || r.id || r.entityId)));
-
-        // 6. Сортируем строки по тому же порядку что и todayEntities
-        const idOrder = todayEntities.map(e => String(e.entity?.id || e.id));
-        todayRows.sort((a, b) => {
-          const ia = idOrder.indexOf(String(a.entity_id || a.id || a.entityId));
-          const ib = idOrder.indexOf(String(b.entity_id || b.id || b.entityId));
-          return ia - ib;
-        });
-
-        populateTable(todayRows);
-        refreshAllTaskCells();
-        setTimeout(() => { if (typeof loadMediaCountsAsync === 'function') loadMediaCountsAsync(); }, 400);
-
-      } catch(e) {
-        showToast('❌ Ошибка загрузки: ' + e.message, 'error');
-      }
+    populateTable(todayRows);
+    refreshAllTaskCells();
+    setTimeout(() => { if (typeof loadMediaCountsAsync === 'function') loadMediaCountsAsync(); }, 400);
+  } catch(e) {
+    showToast('❌ Ошибка загрузки: ' + e.message, 'error');
+  }
     });
   });
 }
