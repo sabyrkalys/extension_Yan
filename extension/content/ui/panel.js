@@ -274,13 +274,14 @@ document.addEventListener('keydown', async (e) => {
 // ══════════════════════════════════════════════════════════════════════════════
 
 const UNIT_COLORS = {
+  'грмп':     '#f44336',  // красный
   '9омсбр':   '#4caf50',
   '1омсбр':   '#2196f3',
   '114омсбр': '#ff9800',
   '177':      '#00bcd4',
   '61':       '#ffd600',
-  '110омсбр': '#9c27b0',
-  '5омсбр':   '#f44336',
+  // '110омсбр': '#9c27b0', убрал
+  // '5омсбр':   '#f44336',
 };
 
 // Получить количество целей в папке за сегодня
@@ -348,9 +349,9 @@ async function renderUnitsDashboard() {
       const folderId = parseInt(card.getAttribute('data-folder-id'));
       const unitName = card.getAttribute('data-unit-name');
 
-  _showTableView();
-  document.querySelector('#currentUnitLabel').textContent = `📂 ${unitName} — ${today.slice(8)}.${today.slice(5,7)}.${today.slice(0,4)}`;
-  showToast(`⏳ Загружаем цели: ${unitName}...`, 'info');
+      _showTableView();
+    document.querySelector('#currentUnitLabel').textContent = `📂 ${unitName} — ${today.slice(8)}.${today.slice(5,7)}.${today.slice(0,4)}`;
+    showToast(`⏳ Загружаем цели: ${unitName}...`, 'info');
 
   try {
     const rows = await loadTargetsFromFolder(folderId, today, true);
