@@ -745,6 +745,8 @@ function createPopup() {
       const impactDate     = popupElement.querySelector('#impactDate').value;
       const result         = popupElement.querySelector('#impactResult').value;
       
+      const selectedUnit = popupElement.querySelector('#targetUnit').value;
+      
       if (!typeCode) { showToast('❌ Выберите категорию цели', 'error'); return; }
       if (!selectedUnit) { showToast('❌ Выберите подразделение', 'error'); return; }
       if (!coordX || !coordY) { showToast('❌ Введите координаты X и Y', 'error'); return; }
