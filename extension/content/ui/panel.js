@@ -759,7 +759,7 @@ function createPopup() {
       const _tree       = JSON.parse(localStorage.getItem(CACHE_KEY_DATES) || 'null');
       const _targetDate = activeFolderDate || _today;
       const _entry      = (_tree?.dates || []).find(d => d.date === _targetDate);
-      const selectedUnit = popupElement.querySelector('#targetUnit').value;
+      //const selectedUnit = popupElement.querySelector('#targetUnit').value;
       const _folderId    = selectedUnit ? parseInt(selectedUnit) : (_entry?.folderId || latestFolderId);
 
       // Шаг 1: создать объект в AstraMap (без медиа)
