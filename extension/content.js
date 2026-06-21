@@ -1426,6 +1426,8 @@ async function loadTargetsFromFolder(folderIds, dateKey, forceRefresh = false) {
           if (local.has_photo) row.has_photo  = local.has_photo;
           if (local.has_video) row.has_video  = local.has_video;
           if (local.notes)     row.notes      = local.notes;
+          if (local.coord_x)   row.coordX = local.coord_x;
+          if (local.coord_y)   row.coordY = local.coord_y;
           // Предзаполняем _mediaFlags до рендера
           if (local.has_photo !== undefined)
             _mediaFlags[String(row.targetNumber) + '_photo'] = !!local.has_photo;
