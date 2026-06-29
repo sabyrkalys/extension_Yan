@@ -724,6 +724,13 @@ function createPopup() {
       const newEntityId = astraResult?.id || astraResult?.entity?.id || astraResult?.entityID || null;
       if (!newEntityId) console.warn('[addTarget] entity_id не найден:', astraResult);
 
+      // Сохраняем адрес и координаты в SQLite ДО перезагрузки таблицы,
+      // чтобы GET_LOCAL_TARGETS уже вернул корректные данные при следующей загрузке.
+      if (newEntityId && (address || coordX || coordY)) {
+        wsSend({ type: 'UPDATE_TARGET_LOCAL', entity_id: String(newEntityId),
+          address: address || undefined, coord_x: coordX || undefined, coord_y: coordY || undefined });
+      }
+
       showToast('⏳ Обновляем таблицу...', 'info');
       await new Promise(r => setTimeout(r, 1500));
 
@@ -743,9 +750,6 @@ function createPopup() {
       if (newEntityId) {
         await new Promise(r => setTimeout(r, 700));
         if (address || coordX || coordY) {
-          await new Promise(r => setTimeout(r, 800));
-          wsSend({ type:'UPDATE_TARGET_LOCAL', entity_id:String(newEntityId), address:address||undefined, coord_x:coordX||undefined, coord_y:coordY||undefined });
-          await new Promise(r => setTimeout(r, 500));
           const newRow = document.querySelector(`#statusTable tr[data-target-id="${newEntityId}"]`);
           if (newRow) {
             if (address) { const span = newRow.cells[3]?.querySelector('span'); if (span) { span.innerText = address; span.title = address; } }

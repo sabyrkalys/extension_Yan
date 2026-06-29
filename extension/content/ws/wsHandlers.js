@@ -123,7 +123,7 @@ function handleWsMessage(msg) {
         // Адрес — col 3
         if (target.address) {
           const placeSpan = row.cells[3]?.querySelector('span');
-          if (placeSpan && !placeSpan.innerText) {
+          if (placeSpan) {
             placeSpan.innerText = target.address;
             placeSpan.title     = target.address;
           }
@@ -150,10 +150,10 @@ function handleWsMessage(msg) {
           for (const [eid, local] of Object.entries(localRes.targets)) {
             const row = document.querySelector(`#statusTable tr[data-target-id="${eid}"]`);
             if (!row) continue;
-            // Адрес — обновляем если пришёл и ячейка пустая
+            // Адрес — обновляем если пришёл из SQLite
             if (local.address) {
               const span = row.cells[3]?.querySelector('span');
-              if (span && !span.innerText) {
+              if (span) {
                 span.innerText = local.address;
                 span.title     = local.address;
               }
