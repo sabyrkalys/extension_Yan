@@ -1275,7 +1275,7 @@ async function loadDateFolders(forceRefresh = false) {
 }
 
 // folderIds — массив всех папок этой даты (могут быть в разных ветках дерева)
-async function loadTargetsFromFolder(folderIds, dateKey, forceRefresh = false) {
+async function loadTargetsFromFolder(folderIds, dateKey, forceRefresh = false, maxDepth = 5) {
   const cacheKey = CACHE_KEY_PREFIX + dateKey;
 
   if (!forceRefresh) {
@@ -1297,7 +1297,7 @@ async function loadTargetsFromFolder(folderIds, dateKey, forceRefresh = false) {
   // Загружаем из всех папок параллельно
   const allItemsArrays = await Promise.all(ids.map(async folderId => {
     const body = {
-      maxDepth: 5, // увеличено — объекты могут лежать в подпапках (напр. "спланировано на...")
+      maxDepth,
       withCounters: false,
       sortingParams: { field: 'title', destination: 'asc', folderFirst: 'desc' },
       filterCriteria: [],

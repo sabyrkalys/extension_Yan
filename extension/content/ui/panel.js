@@ -354,7 +354,7 @@ async function renderUnitsDashboard() {
     showToast(`⏳ Загружаем цели: ${unitName}...`, 'info');
 
   try {
-    const rows = await loadTargetsFromFolder(folderId, today, true);
+    const rows = await loadTargetsFromFolder(folderId, today, true, 1);
 
     // Фильтруем только за сегодня по defeatDate
     const todayRows = rows.filter(r => (r.defeatDate || '').startsWith(today));
@@ -739,7 +739,7 @@ function createPopup() {
       // Предыдущая логика использовала папки по датам из CACHE_KEY_DATES,
       // но новая цель создаётся в папке подразделения (_folderId) — это разные папки.
       _showTableView();
-      const freshRows = await loadTargetsFromFolder(_folderId, _targetDate, true);
+      const freshRows = await loadTargetsFromFolder(_folderId, _targetDate, true, 1);
       const filteredRows = freshRows.filter(r => !_targetDate || (r.defeatDate || '').startsWith(_targetDate));
       filteredRows.sort((a, b) => {
         const ta = (a.defeatDate || '') + 'T' + (a.impactTime || '');
