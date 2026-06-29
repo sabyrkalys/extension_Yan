@@ -735,17 +735,21 @@ function createPopup() {
       await new Promise(r => setTimeout(r, 1500));
 
       cacheDelete(CACHE_KEY_PREFIX + _targetDate);
-      const _freshTree  = JSON.parse(localStorage.getItem(CACHE_KEY_DATES) || 'null');
-      const _freshEntry = (_freshTree?.dates || []).find(d => d.date === _targetDate);
-      if (_freshEntry) {
-        const freshRows = await loadTargetsFromFolder(_freshEntry.folderIds || _freshEntry.folderId, _targetDate, true);
-        populateTable(freshRows);
-        refreshAllTaskCells();
-        updateUndefeatedBadge(_targetDate, freshRows);
-        setTimeout(() => { if (typeof loadMediaCountsAsync === 'function') loadMediaCountsAsync(); }, 500);
-      } else {
-        await loadByDateFromPanel(_targetDate);
-      }
+      // Перезагружаем из той же папки подразделения, куда добавлена цель.
+      // Предыдущая логика использовала папки по датам из CACHE_KEY_DATES,
+      // но новая цель создаётся в папке подразделения (_folderId) — это разные папки.
+      _showTableView();
+      const freshRows = await loadTargetsFromFolder(_folderId, _targetDate, true);
+      const filteredRows = freshRows.filter(r => !_targetDate || (r.defeatDate || '').startsWith(_targetDate));
+      filteredRows.sort((a, b) => {
+        const ta = (a.defeatDate || '') + 'T' + (a.impactTime || '');
+        const tb = (b.defeatDate || '') + 'T' + (b.impactTime || '');
+        return tb.localeCompare(ta);
+      });
+      populateTable(filteredRows);
+      refreshAllTaskCells();
+      updateUndefeatedBadge(_targetDate, filteredRows);
+      setTimeout(() => { if (typeof loadMediaCountsAsync === 'function') loadMediaCountsAsync(); }, 500);
 
       if (newEntityId) {
         await new Promise(r => setTimeout(r, 700));
