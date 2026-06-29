@@ -206,7 +206,7 @@ if (req.method === 'GET' && urlPath === '/media/list') {
     const targets = {};
     for (const id of ids) {
       const row = db.prepare(
-        `SELECT address, has_photo, has_video, notes FROM targets WHERE entity_id = ?`
+        `SELECT address, coord_x, coord_y, has_photo, has_video, notes FROM targets WHERE entity_id = ?`
       ).get(id);
       if (row) targets[id] = row;
     }
@@ -743,7 +743,9 @@ wss.on('connection', (ws, req) => {
       case 'UPDATE_TARGET_LOCAL': {
         const { entity_id, address, has_photo, has_video, defeat_date, notes, coord_x, coord_y } = msg;
         if (!entity_id) break;
-        db.prepare(`INSERT OR IGNORE INTO targets (entity_id) VALUES (?)`).run(String(entity_id));
+        // folder_date NOT NULL requires a value — use today as fallback for new entities
+        // (SYNC_TARGETS will overwrite it with the correct date when it runs shortly after)
+        db.prepare(`INSERT OR IGNORE INTO targets (entity_id, folder_date) VALUES (?, date('now'))`).run(String(entity_id));
         db.prepare(`
           UPDATE targets SET
             address     = COALESCE(?, address),
