@@ -355,9 +355,81 @@ const RESULT_MAP_FROM_ASTRA = {
   'Принятно на доразведку':'принятно_на_доразведку','Подтверждена':'подтверждена',
 };
 
+// AstraMap (после введения TOTP) хранит сессию в localStorage под ключом
+// 'user-storage' в формате zustand persist:
+// { "state": { "accessToken": "...", "refreshToken": "..." }, "version": 0 }
+// Раньше это был сырой JWT под ключом 'access_token'/'token' — поддерживаем
+// оба варианта на случай, если формат снова поменяют.
+const USER_STORAGE_KEY = 'user-storage';
+ 
+function readUserStorageState() {
+  const raw = localStorage.getItem(USER_STORAGE_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed?.state || null;
+  } catch (e) {
+    console.warn('⚠️ [config] Не удалось распарсить user-storage:', e);
+    return null;
+  }
+}
+ 
+function extractJwtFromStorageValue(raw) {
+  if (!raw) return null;
+ 
+  // Сырой JWT (три части через точку, не JSON) — возвращаем как есть.
+  if (raw.split('.').length === 3 && !raw.trim().startsWith('{')) {
+    return raw;
+  }
+ 
+  // Иначе пробуем распарсить как JSON и вытащить accessToken из вложенного state.
+  try {
+    const parsed = JSON.parse(raw);
+    const candidate =
+      parsed?.state?.accessToken ||
+      parsed?.accessToken ||
+      parsed?.access_token ||
+      parsed?.state?.access_token ||
+      null;
+    if (candidate && candidate.split('.').length === 3) return candidate;
+  } catch (e) {
+    // не JSON — падаем ниже
+  }
+ 
+  return null;
+}
+ 
 function getToken() {
-  return localStorage.getItem('access_token') ||
-         localStorage.getItem('token') ||
-         sessionStorage.getItem('access_token') ||
-         null;
+  // 1) Новый формат: user-storage → state.accessToken
+  const userState = readUserStorageState();
+  if (userState?.accessToken) return userState.accessToken;
+ 
+  // 2) Старый формат / запасные варианты — на случай изменений в будущем.
+  const raw =
+    localStorage.getItem('access_token') ||
+    localStorage.getItem('token') ||
+    sessionStorage.getItem('access_token') ||
+    null;
+  const fallback = extractJwtFromStorageValue(raw);
+  if (!fallback) {
+    console.warn('⚠️ [config] Не удалось получить access token ни из user-storage, ни из старых ключей');
+  }
+  return fallback;
+}
+ 
+function getRefreshToken() {
+  const userState = readUserStorageState();
+  if (userState?.refreshToken) return userState.refreshToken;
+ 
+  const raw =
+    localStorage.getItem('access_token') ||
+    localStorage.getItem('token') ||
+    sessionStorage.getItem('access_token') ||
+    null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed?.state?.refreshToken || parsed?.refreshToken || parsed?.refresh_token || null;
+  } catch (e) {
+    return null;
+  }
 }
