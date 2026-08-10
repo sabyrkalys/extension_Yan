@@ -296,6 +296,21 @@ async function fetchUnitTodayCount(folderId) {
   } catch { return 0; }
 }
 
+// Кэш счётчиков дашборда — TTL короткий (не для корректности данных, а чтобы
+// не дёргать сеть заново при каждом возврате на главный экран в течение
+// одной минуты работы, это самый частый переход в интерфейсе).
+const _unitCountCache = {};
+const UNIT_COUNT_CACHE_TTL_MS = 60 * 1000;
+
+async function getUnitTodayCountCached(unitKey) {
+  const cached = _unitCountCache[unitKey];
+  if (cached && Date.now() - cached.ts < UNIT_COUNT_CACHE_TTL_MS) return cached.count;
+  const folderId = await resolveFolderId(unitKey);
+  const count = await fetchUnitTodayCount(folderId);
+  _unitCountCache[unitKey] = { count, ts: Date.now() };
+  return count;
+}
+
 // Показать дашборд подразделений
 async function renderUnitsDashboard() {
   const dash = document.querySelector('#unitsDashboard');
@@ -313,13 +328,12 @@ async function renderUnitsDashboard() {
   }
 
   const today = getMoscowDateStr();
-
-  // Параллельно грузим счётчики
   const entries = Object.entries(UNIT_FOLDERS);
-  const counts  = await Promise.all(entries.map(([key]) => resolveFolderId(key).then(fetchUnitTodayCount)));
 
-  dash.innerHTML = entries.map(([key, unit], i) => {
-    const count = counts[i];
+  // Карточки рисуем сразу, без ожидания счётчиков — счётчики (сетевые
+  // запросы) подгружаются асинхронно и дорисовываются по мере готовности,
+  // не блокируя показ списка подразделений.
+  dash.innerHTML = entries.map(([key, unit]) => {
     const color = UNIT_COLORS[key] || '#607d8b';
     const textColor = (color === '#ffd600') ? '#333' : 'white';
     return `
@@ -334,14 +348,22 @@ async function renderUnitsDashboard() {
         onmouseover="this.style.transform='scale(1.02)';this.style.boxShadow='0 4px 16px rgba(0,0,0,0.2)'"
         onmouseout="this.style.transform='scale(1)';this.style.boxShadow='0 2px 8px rgba(0,0,0,0.15)'">
         <span>${unit.name}</span>
-        ${count > 0 ? `
-          <span style="background:#dc3545;color:white;border-radius:50%;
-            width:40px;height:40px;display:flex;align-items:center;justify-content:center;
-            font-size:16px;font-weight:700;flex-shrink:0;">
-            ${count}
-          </span>` : ''}
+        <span data-count-badge="${key}" style="display:none;background:#dc3545;color:white;border-radius:50%;
+          width:40px;height:40px;align-items:center;justify-content:center;
+          font-size:16px;font-weight:700;flex-shrink:0;"></span>
       </div>`;
   }).join('');
+
+  // Счётчики — параллельно, каждый дорисовывается сам по себе по готовности.
+  entries.forEach(([key]) => {
+    getUnitTodayCountCached(key).then(count => {
+      if (!count) return;
+      const badge = dash.querySelector(`[data-count-badge="${key}"]`);
+      if (!badge) return;
+      badge.textContent = String(count);
+      badge.style.display = 'flex';
+    }).catch(() => {});
+  });
 
   // Клик по карточке → переключить активное подразделение и загрузить таблицу
   dash.querySelectorAll('[data-unit-key]').forEach(card => {
@@ -413,7 +435,7 @@ function _showTableView() {
   if (backBtn) backBtn.style.display = 'inline-block';
   if (datesPanel) datesPanel.style.display = 'flex';
   if (exportBtn) exportBtn.style.display = 'none';
-  if (todayBtn)  todayBtn.style.display  = '';
+  if (todayBtn)  todayBtn.style.display  = 'none'; // не используется сейчас
 }
 
 // ── Экспорт в Excel: сегодняшние цели по ВСЕМ подразделениям одним списком ────
@@ -452,20 +474,46 @@ async function exportTodayAllUnitsToExcel() {
     }
   }
 
-  const sheetRows = allRows.map(r => {
+  // Шапка — 2 строки, "Координаты цели" объединена по горизонтали (X/Y снизу),
+  // остальные колонки объединены по вертикали (rowspan). Последние 6 колонок
+  // (2 комплекта "Средства огневого поражения / Дата / Результаты...") —
+  // структура таблицы под ручное заполнение позже, данными не заполняются.
+  const HEADERS_ROW1 = [
+    '№ п/п', '№ цели', 'Тип и описание объекта', 'Местоположение объекта (цели)',
+    'Координаты цели', '',
+    'Дата обнаружения', 'Источник',
+    'Средства огневого поражения', 'Дата', 'Результаты огневого поражения (доразведки)',
+    'Средства огневого поражения', 'Дата', 'Результаты огневого поражения (доразведки)',
+  ];
+  const HEADERS_ROW2 = ['', '', '', '', 'X', 'Y', '', '', '', '', '', '', '', ''];
+  const SINGLE_COL_IDX = [0, 1, 2, 3, 6, 7, 8, 9, 10, 11, 12, 13]; // все, кроме координат (4,5)
+
+  const dataRows = allRows.map((r, i) => {
     const datePart = r.defeatDate ? r.defeatDate.replace(/^(\d{4})-(\d{2})-(\d{2})$/, '$3.$2.$1') : '';
-    return {
-      'Дата обнаруж.':  [datePart, r.impactTime].filter(Boolean).join(' '),
-      'Номер цели':     r.targetNumber || '',
-      'Характер цели':  r.characteristic || '',
-      'Адрес цели':     r.place || '',
-      'X':              r.coordX || '',
-      'Y':              r.coordY || '',
-      'Подразделение':  r._unitName,
-    };
+    return [
+      i + 1,
+      r.targetNumber || '',
+      r.characteristic || '',
+      r.place || '',
+      r.coordX || '',
+      r.coordY || '',
+      [datePart, r.impactTime].filter(Boolean).join(' '),
+      r._unitName,
+      '', '', '', '', '', '',
+    ];
   });
 
-  const ws = XLSX.utils.json_to_sheet(sheetRows);
+  const ws = XLSX.utils.aoa_to_sheet([HEADERS_ROW1, HEADERS_ROW2, ...dataRows]);
+  ws['!merges'] = [
+    ...SINGLE_COL_IDX.map(c => ({ s: { r: 0, c }, e: { r: 1, c } })), // rowspan-2
+    { s: { r: 0, c: 4 }, e: { r: 0, c: 5 } }, // "Координаты цели" colspan
+  ];
+  ws['!cols'] = [
+    { wch: 6 }, { wch: 12 }, { wch: 16 }, { wch: 26 },
+    { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 14 },
+    { wch: 16 }, { wch: 10 }, { wch: 18 }, { wch: 16 }, { wch: 10 }, { wch: 18 },
+  ];
+
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Цели');
   XLSX.writeFile(wb, `Цели_${today}.xlsx`);
@@ -518,7 +566,7 @@ function createPopup() {
             <button id="showTasksBtn" style="background:#fd7e14;color:white;border:none;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:14px;">📋 Задачи</button>
             <span id="task-badge" style="display:none;position:absolute;top:-6px;right:-6px;background:#dc3545;color:white;border-radius:50%;width:18px;height:18px;font-size:11px;align-items:center;justify-content:center;font-weight:600;"></span>
           </div>
-          <button id="showPlanningBtn" style="background:#6f42c1;color:white;border:none;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:14px;">📅 Спланировано</button>
+          <button id="showPlanningBtn" style="display:none;background:#6f42c1;color:white;border:none;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:14px;">📅 Спланировано</button>
         </div>
         <div style="display:flex;align-items:center;gap:8px;">
           <span id="myRoleTag" style="font-size:12px;background:#2c5282;padding:4px 10px;border-radius:6px;white-space:nowrap;">🔄 Определяю расчёт...</span>
