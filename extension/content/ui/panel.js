@@ -316,7 +316,7 @@ async function renderUnitsDashboard() {
 
   // Параллельно грузим счётчики
   const entries = Object.entries(UNIT_FOLDERS);
-  const counts  = await Promise.all(entries.map(([, unit]) => fetchUnitTodayCount(unit.folderId)));
+  const counts  = await Promise.all(entries.map(([key]) => resolveFolderId(key).then(fetchUnitTodayCount)));
 
   dash.innerHTML = entries.map(([key, unit], i) => {
     const count = counts[i];
@@ -343,36 +343,38 @@ async function renderUnitsDashboard() {
       </div>`;
   }).join('');
 
-  // Клик по карточке → загрузить таблицу
+  // Клик по карточке → переключить активное подразделение и загрузить таблицу
   dash.querySelectorAll('[data-unit-key]').forEach(card => {
     card.addEventListener('click', async () => {
-      const folderId = parseInt(card.getAttribute('data-folder-id'));
+      const unitKey = card.getAttribute('data-unit-key');
       const unitName = card.getAttribute('data-unit-name');
 
+      activeUnitKey = unitKey;
       _showTableView();
-    document.querySelector('#currentUnitLabel').textContent = `📂 ${unitName} — ${today.slice(8)}.${today.slice(5,7)}.${today.slice(0,4)}`;
-    showToast(`⏳ Загружаем цели: ${unitName}...`, 'info');
+      document.querySelector('#currentUnitLabel').textContent = `📂 ${unitName}`;
+      showToast(`⏳ Загружаем даты: ${unitName}...`, 'info');
 
-  try {
-    const rows = await loadTargetsFromFolder(folderId, today, true, 1);
+      try {
+        // Панель "Даты" теперь сама привязана к activeUnitKey — она найдёт
+        // папки дат этого подразделения и по клику на кнопку даты загрузит
+        // и отрисует таблицу (см. обработчик клика в renderDatePanel).
+        await renderDatePanel(true);
 
-    // Фильтруем только за сегодня по defeatDate
-    const todayRows = rows.filter(r => (r.defeatDate || '').startsWith(today));
+        const list = document.querySelector('#dates-list');
+        const todayBtn = list?.querySelector(`button[data-date="${today}"]`);
+        const firstBtn = list?.querySelector('button');
+        const btnToClick = todayBtn || firstBtn;
 
-    // Сортируем по времени до секунды (новые сверху)
-    todayRows.sort((a, b) => {
-      const ta = (a.defeatDate || '') + 'T' + (a.impactTime || '');
-      const tb = (b.defeatDate || '') + 'T' + (b.impactTime || '');
-      return tb.localeCompare(ta);
+        if (btnToClick) {
+          btnToClick.click();
+        } else {
+          populateTable([]);
+          document.querySelector('#currentUnitLabel').textContent = `📂 ${unitName} — нет данных`;
+        }
+      } catch(e) {
+        showToast('❌ Ошибка загрузки: ' + e.message, 'error');
+      }
     });
-
-    populateTable(todayRows);
-    refreshAllTaskCells();
-    setTimeout(() => { if (typeof loadMediaCountsAsync === 'function') loadMediaCountsAsync(); }, 400);
-  } catch(e) {
-    showToast('❌ Ошибка загрузки: ' + e.message, 'error');
-  }
-});
   });
 }
 
@@ -736,6 +738,8 @@ function createPopup() {
 
       showToast('⏳ Обновляем таблицу...', 'info');
       await new Promise(r => setTimeout(r, 1500));
+
+      const _folderId = selectedUnit ? await resolveFolderId(selectedUnit) : latestFolderId;
 
       cacheDelete(CACHE_KEY_PREFIX + _targetDate);
       // Перезагружаем из той же папки подразделения, куда добавлена цель.

@@ -50,3 +50,12 @@ function utcIsoToMskDate(isoStr) {
     return new Date(mskMs).toISOString().slice(0, 10);
   } catch { return ''; }
 }
+
+// Границы календарного дня (МСК) в UTC ISO — для relevantUpdatedAtFilter
+// в поиске AstraMap (gte/lte), напр. {gte:"2026-08-09T21:00:00.000Z", lte:"2026-08-10T20:59:59.999Z"}
+function mskDateRangeToUtcISO(dateStr) {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const gte = new Date(Date.UTC(year, month - 1, day, -3, 0, 0, 0)).toISOString();
+  const lte = new Date(Date.UTC(year, month - 1, day, 20, 59, 59, 999)).toISOString();
+  return { gte, lte };
+}

@@ -16,6 +16,8 @@ let activeFolderId   = null;
 let activeFolderDate = null;
 let latestFolderId   = null;
 let latestFolderDate = null;
+// Какое подразделение сейчас просматривается в панели "Даты" (по умолчанию — ГрМП/ГООПП).
+let activeUnitKey    = 'грмп';
 
 // Счётчик непрочитанных задач — используется в tasks.js и wsHandlers.js
 let unreadTaskCount = 0;
@@ -1172,11 +1174,17 @@ const MONTH_MAP = {
 // Форматы: "Май 2026 г.", "май 2026г.", "05.2026 г.", "2026-05"
 // function parseMonthFolder(title) { → content/api/astraApi.js
 
-async function loadDateFolders(forceRefresh = false) {
+// unitKey — какое подразделение (ключ из UNIT_FOLDERS) сканировать на даты.
+// ГрМП использует "родной" CACHE_KEY_DATES (не менять — от него зависит вся
+// система планирования/публикации); остальные подразделения кэшируются
+// отдельно, под своим ключом, чтобы не перетирать дерево дат ГрМП.
+async function loadDateFolders(forceRefresh = false, unitKey = activeUnitKey) {
+  const cacheKey = unitKey === 'грмп' ? CACHE_KEY_DATES : `${CACHE_KEY_DATES}:${unitKey}`;
+
   // Проверяем кэш
   if (!forceRefresh) {
     try {
-      const cached = JSON.parse(localStorage.getItem(CACHE_KEY_DATES) || 'null');
+      const cached = JSON.parse(localStorage.getItem(cacheKey) || 'null');
       if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
         console.log('[dates] Из кэша:', cached.dates.length, 'дат');
         return cached.dates;
@@ -1184,7 +1192,7 @@ async function loadDateFolders(forceRefresh = false) {
     } catch {}
   }
 
-  console.log('[dates] Загружаем папки...');
+  console.log(`[dates] Загружаем папки (${unitKey})...`);
 
   try {
     // Текущий месяц и предыдущий (на случай перехода месяца)
@@ -1196,8 +1204,9 @@ async function loadDateFolders(forceRefresh = false) {
     const prevMonth = curMonth === 1 ? 12 : curMonth - 1;
     const prevYear  = curMonth === 1 ? curYear - 1 : curYear;
 
-    // Шаг 1: дочерние папки ГООП — ищем папки текущего и предыдущего месяца
-    const level1 = await apiFetchFolderChildren(ROOT_FOLDER_ID);
+    // Шаг 1: дочерние папки подразделения — ищем папки текущего и предыдущего месяца
+    const rootFolderId = await resolveFolderId(unitKey);
+    const level1 = await apiFetchFolderChildren(rootFolderId);
     console.log('[dates] Папок в ГООП:', level1.length);
 
     // Находим папки нужных месяцев
@@ -1209,8 +1218,10 @@ async function loadDateFolders(forceRefresh = false) {
       const parsed = parseMonthFolder(e.title);
       if (!parsed) continue;
 
-      const isCurrent  = parsed.month === curMonth  && parsed.year === curYear;
-      const isPrevious = parsed.month === prevMonth && parsed.year === prevYear;
+      // Год в названии папки может отсутствовать (parsed.year === null) —
+      // тогда полагаемся только на совпадение месяца.
+      const isCurrent  = parsed.month === curMonth  && (parsed.year === curYear  || parsed.year === null);
+      const isPrevious = parsed.month === prevMonth && (parsed.year === prevYear || parsed.year === null);
 
       if (isCurrent || isPrevious) {
         monthFolders.push({ id: e.id, title: e.title, parsed });
@@ -1264,7 +1275,7 @@ async function loadDateFolders(forceRefresh = false) {
     const uniqueDates = Object.values(dateMap)
       .sort((a, b) => b.date.localeCompare(a.date));
 
-    localStorage.setItem(CACHE_KEY_DATES, JSON.stringify({ ts: Date.now(), dates: uniqueDates }));
+    localStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), dates: uniqueDates }));
     console.log('[dates] Итого дат:', uniqueDates.length);
     return uniqueDates;
 
@@ -1274,9 +1285,17 @@ async function loadDateFolders(forceRefresh = false) {
   }
 }
 
-// folderIds — массив всех папок этой даты (могут быть в разных ветках дерева)
-async function loadTargetsFromFolder(folderIds, dateKey, forceRefresh = false, maxDepth = 5) {
-  const cacheKey = CACHE_KEY_PREFIX + dateKey;
+// folderIds — массив всех папок этой даты (могут быть в разных ветках дерева).
+// dateRange (опционально) — {gte,lte}: вместо обхода folderIds как папок дня,
+// делаем один плоский запрос с серверной фильтрацией по дате (см.
+// apiFetchTargetsByDate) — тогда folderIds трактуется как ОДИН корневой id
+// подразделения, а не массив папок дня. Используется для подразделений без
+// отдельного уровня "папка дня" (см. loadTargetsForUnitDate).
+// cacheKeySuffix (опционально) — отдельный ключ кэша, если он должен
+// отличаться от dateKey (который также уходит на сервер в SYNC_TARGETS и
+// должен оставаться чистой датой).
+async function loadTargetsFromFolder(folderIds, dateKey, forceRefresh = false, maxDepth = 5, dateRange = null, cacheKeySuffix = null) {
+  const cacheKey = CACHE_KEY_PREFIX + (cacheKeySuffix || dateKey);
 
   if (!forceRefresh) {
     try {
@@ -1288,31 +1307,39 @@ async function loadTargetsFromFolder(folderIds, dateKey, forceRefresh = false, m
     } catch {}
   }
 
-  // Поддержка как массива так и одиночного id (обратная совместимость)
-  const ids = Array.isArray(folderIds) ? folderIds : [folderIds];
-  console.log(`[dates] Загружаем цели из ${ids.length} папок за ${dateKey}...`);
+  let allItemsArrays;
 
-  const token = getToken();
+  if (dateRange) {
+    console.log(`[dates] Загружаем цели за ${dateKey} (серверный фильтр по дате)...`);
+    const items = await apiFetchTargetsByDate(folderIds, dateKey);
+    allItemsArrays = [items];
+  } else {
+    // Поддержка как массива так и одиночного id (обратная совместимость)
+    const ids = Array.isArray(folderIds) ? folderIds : [folderIds];
+    console.log(`[dates] Загружаем цели из ${ids.length} папок за ${dateKey}...`);
 
-  // Загружаем из всех папок параллельно
-  const allItemsArrays = await Promise.all(ids.map(async folderId => {
-    const body = {
-      maxDepth,
-      withCounters: false,
-      sortingParams: { field: 'title', destination: 'asc', folderFirst: 'desc' },
-      filterCriteria: [],
-      templateIDs: [1, 2],
-      parentEntityID: folderId,
-    };
-    const res = await fetch(ASTRA_API.search, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return data.entities || data.items || [];
-  }));
+    const token = getToken();
+
+    // Загружаем из всех папок параллельно
+    allItemsArrays = await Promise.all(ids.map(async folderId => {
+      const body = {
+        maxDepth,
+        withCounters: false,
+        sortingParams: { field: 'title', destination: 'asc', folderFirst: 'desc' },
+        filterCriteria: [],
+        templateIDs: [1, 2],
+        parentEntityID: folderId,
+      };
+      const res = await fetch(ASTRA_API.search, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.entities || data.items || [];
+    }));
+  }
 
   // Объединяем результаты, убираем дубли по id
   const seenIds = new Set();
@@ -1484,14 +1511,47 @@ async function loadTargetsFromFolder(folderIds, dateKey, forceRefresh = false, m
   return tableRows;
 }
 
-// Отрисовать кнопки дат в панели
-async function renderDatePanel(forceRefresh = false) {
+// Цели подразделения unitKey за конкретный день — без обхода дерева папок
+// (у части подразделений нет отдельного уровня "папка дня", см. раздел 5
+// хендоффа): один плоский запрос с серверной фильтрацией по дате.
+async function loadTargetsForUnitDate(unitKey, dateStr, forceRefresh = false) {
+  const folderId = await resolveFolderId(unitKey);
+  const dateRange = mskDateRangeToUtcISO(dateStr);
+  return loadTargetsFromFolder(folderId, dateStr, forceRefresh, 0, dateRange, `${dateStr}:${unitKey}`);
+}
+
+// Последние n календарных дней (МСК), без обращения к AstraMap — список для
+// кнопок дат подразделений без папки-дня (folderId/folderIds здесь не
+// используются, см. loadTargetsForUnitDate).
+function buildRecentDatesList(n = 14) {
+  const [y, m, d] = getMoscowDateStr().split('-').map(Number);
+  const dates = [];
+  for (let i = 0; i < n; i++) {
+    const dateStr = new Date(Date.UTC(y, m - 1, d - i)).toISOString().slice(0, 10);
+    dates.push({ date: dateStr, title: dateStr, folderId: null, folderIds: null, entityCount: 0 });
+  }
+  return dates;
+}
+
+// Отрисовать кнопки дат в панели (для подразделения unitKey, по умолчанию — активное)
+async function renderDatePanel(forceRefresh = false, unitKey = activeUnitKey) {
   const list = document.querySelector('#dates-list');
   if (!list) return;
 
+  // На практике ни у одного подразделения (включая ГрМП/ГООПП) сейчас нет
+  // гарантированной папки-дня — цели часто лежат прямо в папке подразделения
+  // или в произвольной вложенности, созданной вручную. Поэтому для панели
+  // просмотра всегда используем статичный список дат + прямой поиск по дате
+  // на сервере. Планирование/публикация (findOrCreateDayFolder,
+  // loadDateFolders) — отдельная, самодостаточная логика, эту панель не
+  // использует и её не трогаем.
+  const useFolderTree = false;
+
   list.innerHTML = '<span style="font-size:11px;color:#5a7fa0;">загрузка...</span>';
 
-  const dates = await loadDateFolders(forceRefresh);
+  const dates = useFolderTree
+    ? await loadDateFolders(forceRefresh, unitKey)
+    : buildRecentDatesList(14);
 
   if (!dates.length) {
     list.innerHTML = '<span style="font-size:11px;color:#5a7fa0;">папки не найдены</span>';
@@ -1590,7 +1650,9 @@ async function renderDatePanel(forceRefresh = false) {
 
       let rows = [];
       try {
-        rows = await loadTargetsFromFolder(d.folderIds || d.folderId, d.date, true);
+        rows = useFolderTree
+          ? await loadTargetsFromFolder(d.folderIds || d.folderId, d.date, true)
+          : await loadTargetsForUnitDate(unitKey, d.date, true);
         populateTable(rows);
         refreshAllTaskCells();
         loadPlansForDate(d.date);

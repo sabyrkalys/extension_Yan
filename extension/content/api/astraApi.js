@@ -241,7 +241,7 @@ async function apiFetchTargetsInFolder(folderId, date) {
   const body = {
     maxDepth:      1,
     withCounters:  false,
-    sortingParams: { field: 'createdAt', destination: 'desc', folderFirst: 'asc' },
+    sortingParams: { field: 'title', destination: 'desc', folderFirst: 'asc' },
     filterCriteria: [],
     templateIDs:    [2],
     parentEntityID: folderId,
@@ -252,6 +252,36 @@ async function apiFetchTargetsInFolder(folderId, date) {
     credentials: 'include',
     headers: apiHeaders(),
     body: JSON.stringify(body),
+  });
+
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  return data.entities || data.items || [];
+}
+
+// Поиск целей за конкретный день (МСК) внутри поддерева folderId —
+// фильтрация происходит на сервере (relevantUpdatedAtFilter), поэтому на
+// клиент не тянется весь месяц. rootOnly:true здесь не подходит — сервер
+// возвращает с ним только саму папку folderId, а не её содержимое (работает
+// только при parentEntityID:0, поиск по всей базе). Вместо этого — обычный
+// maxDepth. Папки создаются вручную бойцами, вложенность непредсказуема
+// (напр. "61 → ГООПП → август → 09.08.26 → Обнаружено 09.08.26 → цель" —
+// это уже 5 уровней), поэтому берём с запасом.
+async function apiFetchTargetsByDate(folderId, dateStr, maxDepth = 10) {
+  const { gte, lte } = mskDateRangeToUtcISO(dateStr);
+  const res = await fetch(ASTRA_API.search, {
+    method: 'POST',
+    credentials: 'include',
+    headers: apiHeaders(),
+    body: JSON.stringify({
+      maxDepth,
+      withCounters: false,
+      sortingParams: { field: 'created_at', destination: 'asc', folderFirst: 'asc' },
+      filterCriteria: [],
+      relevantUpdatedAtFilter: { relevance: 'custom', gte, lte },
+      templateIDs: [2],
+      parentEntityID: folderId,
+    }),
   });
 
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -274,7 +304,9 @@ function parseMonthFolder(title) {
   for (const [key, num] of Object.entries(MONTHS)) {
     if (t.startsWith(key)) {
       const yearMatch = t.match(/\b(202\d|203\d)\b/);
-      if (yearMatch) return { month: num, year: parseInt(yearMatch[1]) };
+      // Год может быть не указан в названии (например, просто "Август") —
+      // в этом случае год не проверяем, полагаемся на сопоставление месяца.
+      return { month: num, year: yearMatch ? parseInt(yearMatch[1]) : null };
     }
   }
 
