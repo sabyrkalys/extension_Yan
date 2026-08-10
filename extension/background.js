@@ -288,6 +288,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     handleGetMediaFile(msg).then(sendResponse).catch(err => sendResponse({ ok: false, error: err.message }));
     return true;
   }
+  if (msg.type === 'LOAD_XLSX_LIB') {
+    const tabId = sender.tab?.id;
+    if (!tabId) { sendResponse({ ok: false, error: 'нет tabId' }); return true; }
+    chrome.scripting.executeScript({ target: { tabId }, files: ['xlsx.full.min.js'] })
+      .then(() => sendResponse({ ok: true }))
+      .catch(err => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
 });
 
 connectWS();

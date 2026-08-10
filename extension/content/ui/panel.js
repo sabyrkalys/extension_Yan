@@ -384,10 +384,18 @@ function _showDashboard() {
   const table = document.querySelector('.table-wrapper');
   const label = document.querySelector('#currentUnitLabel');
   const backBtn = document.querySelector('#backToDashboardBtn');
+  const datesPanel = document.querySelector('#dates-panel');
+  const exportBtn = document.querySelector('#exportTableData');
+  const todayBtn  = document.querySelector('#loadTodayMap');
   if (dash)   dash.style.display   = 'flex';
   if (table)  table.style.display  = 'none';
   if (label)  label.style.display  = 'none';
   if (backBtn) backBtn.style.display = 'none';
+  if (datesPanel) datesPanel.style.display = 'none';
+  // Экспорт в Excel — только в главном окне (сводка по всем подразделениям);
+  // "Сегодня" здесь смысла не имеет (нет активной папки/даты для загрузки).
+  if (exportBtn) exportBtn.style.display = '';
+  if (todayBtn)  todayBtn.style.display  = 'none';
 }
 
 // Показать таблицу (скрыть дашборд)
@@ -396,10 +404,72 @@ function _showTableView() {
   const table = document.querySelector('.table-wrapper');
   const label = document.querySelector('#currentUnitLabel');
   const backBtn = document.querySelector('#backToDashboardBtn');
+  const datesPanel = document.querySelector('#dates-panel');
+  const exportBtn = document.querySelector('#exportTableData');
+  const todayBtn  = document.querySelector('#loadTodayMap');
   if (dash)   dash.style.display   = 'none';
   if (table)  table.style.display  = '';
   if (label)  label.style.display  = 'block';
   if (backBtn) backBtn.style.display = 'inline-block';
+  if (datesPanel) datesPanel.style.display = 'flex';
+  if (exportBtn) exportBtn.style.display = 'none';
+  if (todayBtn)  todayBtn.style.display  = '';
+}
+
+// ── Экспорт в Excel: сегодняшние цели по ВСЕМ подразделениям одним списком ────
+async function exportTodayAllUnitsToExcel() {
+  const today = getMoscowDateStr();
+  const unitKeys = Object.keys(UNIT_FOLDERS);
+
+  showToast('⏳ Собираем цели по всем подразделениям...', 'info');
+
+  const perUnit = await Promise.all(unitKeys.map(async key => {
+    try {
+      const rows = await loadTargetsForUnitDate(key, today, false);
+      return rows.map(r => ({ ...r, _unitName: UNIT_FOLDERS[key].name }));
+    } catch (err) {
+      console.warn(`[export] Ошибка загрузки "${key}":`, err);
+      return [];
+    }
+  }));
+
+  const allRows = perUnit.flat();
+  if (!allRows.length) {
+    showToast('Нет целей за сегодня ни по одному подразделению', 'info');
+    return;
+  }
+
+  if (typeof XLSX === 'undefined') {
+    const loaded = await new Promise(resolve => {
+      chrome.runtime.sendMessage({ type: 'LOAD_XLSX_LIB' }, (res) => {
+        if (chrome.runtime.lastError) resolve(false);
+        else resolve(res?.ok);
+      });
+    });
+    if (!loaded || typeof XLSX === 'undefined') {
+      showToast('❌ Не удалось загрузить библиотеку экспорта', 'error');
+      return;
+    }
+  }
+
+  const sheetRows = allRows.map(r => {
+    const datePart = r.defeatDate ? r.defeatDate.replace(/^(\d{4})-(\d{2})-(\d{2})$/, '$3.$2.$1') : '';
+    return {
+      'Дата обнаруж.':  [datePart, r.impactTime].filter(Boolean).join(' '),
+      'Номер цели':     r.targetNumber || '',
+      'Характер цели':  r.characteristic || '',
+      'Адрес цели':     r.place || '',
+      'X':              r.coordX || '',
+      'Y':              r.coordY || '',
+      'Подразделение':  r._unitName,
+    };
+  });
+
+  const ws = XLSX.utils.json_to_sheet(sheetRows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Цели');
+  XLSX.writeFile(wb, `Цели_${today}.xlsx`);
+  showToast(`✅ Экспортировано целей: ${allRows.length}`, 'success');
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -888,7 +958,8 @@ function createPopup() {
     newTaskModal.querySelector('#taskTargetSelect').value = '';
   });
 
-  popupElement.querySelector('#exportTableData').addEventListener('click', () => { showToast('Экспорт в Excel – в разработке', 'info'); });
+  const exportBtn = popupElement.querySelector('#exportTableData');
+  exportBtn.addEventListener('click', withLock(exportBtn, exportTodayAllUnitsToExcel, { label: '⏳ Экспорт...' }));
 
   const refreshBtn = popupElement.querySelector('#refreshDatesBtn');
   refreshBtn.addEventListener('click', withLock(refreshBtn, async () => { cacheClearAll(); await renderDatePanel(true); }, { label: '⏳' }));
