@@ -140,6 +140,27 @@ async function apiSendTarget(rowData, parentFolderId, mediaItems = []) {
   return res.json();
 }
 
+// Создать / обновить объект на карте для конкретного подразделения (по ключу
+// из UNIT_FOLDERS) — резолвит актуальный id папки через folderResolver.js
+// вместо хардкоженного folderId. При ошибке "sql: no rows in result set"
+// (папка была пересоздана/перенесена на AstraMap) сбрасывает кэш резолвера
+// и повторяет запрос один раз с заново разрешённым id.
+async function apiSendTargetToUnit(rowData, unitKey, mediaItems = []) {
+  const folderId = await resolveFolderId(unitKey);
+
+  try {
+    return await apiSendTarget(rowData, folderId, mediaItems);
+  } catch (err) {
+    const message = err?.message || '';
+    if (!message.includes('sql: no rows in result set')) throw err;
+
+    console.warn(`[astraApi] parentEntityID=${folderId} невалиден для "${unitKey}", сбрасываю кэш и пробую снова`);
+    invalidateFolderCache(unitKey);
+    const freshFolderId = await resolveFolderId(unitKey, { forceRefresh: true });
+    return apiSendTarget(rowData, freshFolderId, mediaItems);
+  }
+}
+
 // Удалить объект с карты
 async function apiDeleteTarget(targetId) {
   const res = await fetch(`${ASTRA_API.entity}/${targetId}?cascade=true`, {

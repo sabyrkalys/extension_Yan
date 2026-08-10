@@ -651,7 +651,7 @@ function createPopup() {
   if (unitSelectEl && typeof UNIT_FOLDERS !== 'undefined') {
     Object.entries(UNIT_FOLDERS).forEach(([key, unit]) => {
       const opt = document.createElement('option');
-      opt.value = unit.folderId;
+      opt.value = key;
       opt.textContent = unit.name;
       unitSelectEl.appendChild(opt);
     });
@@ -715,10 +715,13 @@ function createPopup() {
       const rowData    = { targetNumber:'0', characteristic, typeName, coordX, coordY, impactTime, result, defeatDate: impactDate };
       const _today     = getMoscowDateStr();
       const _targetDate = activeFolderDate || _today;
-      const _folderId  = selectedUnit ? parseInt(selectedUnit) : latestFolderId;
 
       let astraResult = null;
-      try { astraResult = await apiSendTarget(rowData, _folderId, []); }
+      try {
+        astraResult = selectedUnit
+          ? await apiSendTargetToUnit(rowData, selectedUnit, [])
+          : await apiSendTarget(rowData, latestFolderId, []);
+      }
       catch (err) { showToast('❌ Ошибка создания в AstraMap: ' + err.message, 'error'); return; }
 
       const newEntityId = astraResult?.id || astraResult?.entity?.id || astraResult?.entityID || null;

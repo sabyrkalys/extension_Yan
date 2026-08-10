@@ -48,6 +48,7 @@
         "content/ui/tasks.js",
         "content/ui/planning.js",
         "content/ui/panel.js",
+        "content/api/folderResolver.js",
         "content/api/astraApi.js",
         "content.js"
       ],
